@@ -5,6 +5,8 @@
 //! `async-channel` process events into the GLib main loop.
 
 mod app;
+mod ctx;
+mod views;
 mod window;
 
 fn main() -> glib::ExitCode {

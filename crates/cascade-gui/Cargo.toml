@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 cascade-core = { path = "../cascade-core" }
 async-channel.workspace = true
+serde_json.workspace = true
 # gtk4-rs stack. Version features are picked once GTK4 dev libs are installed;
 # Ubuntu 26.04 ships a recent GTK4, so v4_12 is a safe floor.
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
