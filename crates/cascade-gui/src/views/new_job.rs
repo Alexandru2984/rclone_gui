@@ -3,13 +3,15 @@
 //!
 //! This is the heart of Phase 1: a full, safe, end-to-end flow for both tools.
 
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::gio;
 
 use cascade_core::job::{JobSpec, OpKind};
-use cascade_core::process::{spawn, ProcessEvent};
+use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle};
 use cascade_core::security::destructive::RiskLevel;
 use cascade_core::security::path;
 use cascade_core::Tool;
@@ -32,11 +34,18 @@ struct Inputs {
     preview: gtk::Label,
     risk: gtk::Label,
 
+    progress_bar: gtk::ProgressBar,
+    progress_label: gtk::Label,
+
     log_view: gtk::TextView,
     log_buffer: gtk::TextBuffer,
 
     run_btn: gtk::Button,
     dry_btn: gtk::Button,
+    cancel_btn: gtk::Button,
+
+    /// The currently running child, if any — kept so Cancel can reach it.
+    current: RefCell<Option<RunHandle>>,
 
     /// Callback to refresh sibling screens (e.g. History) after a run.
     on_changed: Rc<dyn Fn()>,
@@ -97,15 +106,29 @@ pub fn build(
     let cmd_group = adw::PreferencesGroup::builder().title("Command preview").build();
     cmd_group.add(&cmd_box);
 
+    let progress_bar = gtk::ProgressBar::builder().show_text(false).visible(false).build();
+    let progress_label = gtk::Label::builder()
+        .xalign(0.0)
+        .visible(false)
+        .css_classes(vec!["dim-label".to_string(), "caption".to_string()])
+        .build();
+    let progress_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    progress_box.append(&progress_bar);
+    progress_box.append(&progress_label);
+    let progress_group = adw::PreferencesGroup::builder().title("Progress").build();
+    progress_group.add(&progress_box);
+
     let log_view = gtk::TextView::builder().editable(false).monospace(true).build();
     let log_buffer = log_view.buffer();
     let scroller = gtk::ScrolledWindow::builder().min_content_height(200).vexpand(true).child(&log_view).build();
     let log_group = adw::PreferencesGroup::builder().title("Live output").build();
     log_group.add(&scroller);
 
+    let cancel_btn = gtk::Button::builder().label("Cancel").css_classes(vec!["pill".to_string(), "destructive-action".to_string()]).sensitive(false).build();
     let dry_btn = gtk::Button::builder().label("Dry-run").css_classes(vec!["pill".to_string()]).build();
     let run_btn = gtk::Button::builder().label("Start").css_classes(vec!["pill".to_string(), "suggested-action".to_string()]).build();
     let btn_box = gtk::Box::builder().halign(gtk::Align::End).spacing(8).build();
+    btn_box.append(&cancel_btn);
     btn_box.append(&dry_btn);
     btn_box.append(&run_btn);
 
@@ -114,6 +137,7 @@ pub fn build(
     page.add(&paths_group);
     page.add(&opts_group);
     page.add(&cmd_group);
+    page.add(&progress_group);
     page.add(&log_group);
 
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -134,10 +158,14 @@ pub fn build(
         delete,
         preview,
         risk,
+        progress_bar,
+        progress_label,
         log_view,
         log_buffer,
         run_btn,
         dry_btn,
+        cancel_btn,
+        current: RefCell::new(None),
         on_changed,
     });
 
@@ -180,6 +208,18 @@ impl Inputs {
         {
             let this = self.clone();
             self.run_btn.connect_clicked(move |_| this.on_start());
+        }
+        {
+            let this = self.clone();
+            self.cancel_btn.connect_clicked(move |_| this.cancel());
+        }
+    }
+
+    fn cancel(&self) {
+        if let Some(handle) = self.current.borrow().as_ref() {
+            handle.cancel();
+            self.log_line("[cancelling…]");
+            self.cancel_btn.set_sensitive(false);
         }
     }
 
@@ -340,8 +380,16 @@ impl Inputs {
         self.log_line(&format!("$ {preview}"));
         self.set_running(true);
 
-        let handle = spawn(spec.binary(), argv);
+        // Pick the right progress parser for the tool.
+        let parser: LineParser = match spec.tool {
+            Tool::Rsync => Arc::new(progress::parse_rsync),
+            Tool::Rclone => Arc::new(progress::parse_rclone),
+        };
+        let handle = spawn_with_parser(spec.binary(), argv, Some(parser));
         let events = handle.events.clone();
+        *self.current.borrow_mut() = Some(handle);
+
+        let job_name = spec.name.clone();
         let this = self.clone();
         glib::spawn_future_local(async move {
             let mut exit_code = None;
@@ -350,6 +398,7 @@ impl Inputs {
             while let Ok(ev) = events.recv().await {
                 match ev {
                     ProcessEvent::Started { pid } => this.log_line(&format!("[started pid={pid:?}]")),
+                    ProcessEvent::Progress(p) => this.show_progress(&p),
                     ProcessEvent::Stdout(line) => this.log_line(&line),
                     ProcessEvent::Stderr(line) => this.log_line(&format!("! {line}")),
                     ProcessEvent::Error(e) => {
@@ -366,14 +415,55 @@ impl Inputs {
             }
             let status = if failed { "failed" } else { "completed" };
             let _ = this.ctx.store.finish_run(run_id, status, exit_code, error_summary.as_deref());
+            *this.current.borrow_mut() = None;
             this.set_running(false);
+            if !failed {
+                this.progress_bar.set_fraction(1.0);
+            }
+            this.notify_done(&job_name, !failed);
             (this.on_changed)();
         });
+    }
+
+    /// Render a progress snapshot onto the bar + label.
+    fn show_progress(&self, p: &cascade_core::job::Progress) {
+        match p.percent {
+            Some(pct) => self.progress_bar.set_fraction((pct as f64 / 100.0).clamp(0.0, 1.0)),
+            None => self.progress_bar.pulse(),
+        }
+        let mut parts = Vec::new();
+        if let Some(pct) = p.percent {
+            parts.push(format!("{pct:.0}%"));
+        }
+        if let Some(s) = p.speed_bps {
+            parts.push(fmt_speed(s));
+        }
+        if let Some(eta) = p.eta_secs {
+            parts.push(format!("ETA {}", fmt_duration(eta)));
+        }
+        self.progress_label.set_label(&parts.join("  ·  "));
+    }
+
+    /// Send a desktop notification when a run finishes.
+    fn notify_done(&self, job_name: &str, ok: bool) {
+        if let Some(app) = self.window.application() {
+            let title = if ok { "Job completed" } else { "Job failed" };
+            let notif = gio::Notification::new(title);
+            notif.set_body(Some(job_name));
+            app.send_notification(Some("cascade-run-finished"), &notif);
+        }
     }
 
     fn set_running(&self, running: bool) {
         self.run_btn.set_sensitive(!running);
         self.dry_btn.set_sensitive(!running);
+        self.cancel_btn.set_sensitive(running);
+        if running {
+            self.progress_bar.set_fraction(0.0);
+            self.progress_bar.set_visible(true);
+            self.progress_label.set_label("starting…");
+            self.progress_label.set_visible(true);
+        }
     }
 
     fn clear_log(&self) {
@@ -429,4 +519,26 @@ fn op_str(op: OpKind) -> &'static str {
 fn last_component(p: &str) -> String {
     let t = p.trim_end_matches('/');
     t.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(t).to_string()
+}
+
+/// Human-readable transfer rate from bytes/second.
+fn fmt_speed(bps: u64) -> String {
+    const UNITS: [&str; 5] = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
+    let mut v = bps as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    format!("{v:.1} {}", UNITS[i])
+}
+
+/// Format a duration in seconds as `M:SS` or `H:MM:SS`.
+fn fmt_duration(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }

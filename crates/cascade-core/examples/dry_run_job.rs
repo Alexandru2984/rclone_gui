@@ -58,6 +58,7 @@ fn main() -> std::io::Result<()> {
     while let Ok(ev) = handle.events.recv_blocking() {
         match ev {
             ProcessEvent::Started { pid } => println!("  [started pid={pid:?}]"),
+            ProcessEvent::Progress(p) => println!("  [progress {p:?}]"),
             ProcessEvent::Stdout(line) => println!("  {line}"),
             ProcessEvent::Stderr(line) => eprintln!("  ! {line}"),
             ProcessEvent::Error(e) => eprintln!("  [error] {e}"),
@@ -69,5 +70,34 @@ fn main() -> std::io::Result<()> {
     }
 
     println!("\nDry-run complete — destination was NOT modified.");
+
+    // 6. Real transfer WITH live progress parsing (still fully inside temp dirs).
+    //    Generate a ~32 MiB file so rsync emits progress2 lines we can parse.
+    println!("\n== Real copy with live progress (temp dirs only) ==");
+    let big = src.join("payload.bin");
+    std::fs::write(&big, vec![0u8; 32 * 1024 * 1024])?;
+    let real_opts = RsyncOptions { dry_run: false, ..Default::default() };
+    let real_args = build_args(&source, &dest, &real_opts).expect("valid command");
+    let parser: cascade_core::process::LineParser =
+        std::sync::Arc::new(cascade_core::process::progress::parse_rsync);
+    let handle = cascade_core::process::spawn_with_parser("rsync", real_args, Some(parser));
+    while let Ok(ev) = handle.events.recv_blocking() {
+        match ev {
+            ProcessEvent::Progress(p) => println!(
+                "  [progress] {:?}% — {:?} B/s — ETA {:?}s",
+                p.percent, p.speed_bps, p.eta_secs
+            ),
+            ProcessEvent::Error(e) => eprintln!("  [error] {e}"),
+            ProcessEvent::Finished { success, code } => {
+                println!("  [finished success={success} code={code:?}]");
+                break;
+            }
+            _ => {}
+        }
+    }
+    // Clean up the generated payload.
+    let _ = std::fs::remove_file(&big);
+    let _ = std::fs::remove_file(dst.join("payload.bin"));
+
     Ok(())
 }

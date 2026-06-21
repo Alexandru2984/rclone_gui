@@ -67,8 +67,8 @@ pub struct RcloneOptions {
     pub includes: Vec<String>,
     /// 0 = quiet, 1 = -v, 2 = -vv.
     pub verbosity: u8,
-    /// Emit machine-readable stats/log for progress parsing.
-    pub json_log: bool,
+    /// Emit periodic one-line transfer stats for progress parsing.
+    pub stats: bool,
     /// Already-tokenized extra flags (each element is one argv item).
     pub extra_flags: Vec<String>,
 }
@@ -85,7 +85,7 @@ impl Default for RcloneOptions {
             excludes: Vec::new(),
             includes: Vec::new(),
             verbosity: 0,
-            json_log: true,
+            stats: true,
             extra_flags: Vec::new(),
         }
     }
@@ -160,9 +160,8 @@ pub fn build_args(
         1 => args.push("-v".into()),
         _ => args.push("-vv".into()),
     }
-    if opts.json_log {
-        // structured, parseable progress
-        args.push("--use-json-log".into());
+    if opts.stats {
+        // periodic, parseable one-line progress on stderr
         args.push("--stats".into());
         args.push("1s".into());
         args.push("--stats-one-line".into());
@@ -204,7 +203,7 @@ mod tests {
     #[test]
     fn copy_builds_expected_argv() {
         let opts = RcloneOptions {
-            json_log: false,
+            stats: false,
             ..Default::default()
         };
         let args = build_args(RcloneOp::Copy, "/src", Some("gdrive:backup"), &opts).unwrap();
@@ -215,7 +214,7 @@ mod tests {
     fn dry_run_flag_is_inserted() {
         let opts = RcloneOptions {
             dry_run: true,
-            json_log: false,
+            stats: false,
             ..Default::default()
         };
         let args = build_args(RcloneOp::Sync, "/src", Some("/dst"), &opts).unwrap();
@@ -238,7 +237,7 @@ mod tests {
     #[test]
     fn read_only_op_has_no_dest() {
         let opts = RcloneOptions {
-            json_log: false,
+            stats: false,
             ..Default::default()
         };
         let args = build_args(RcloneOp::Size, "gdrive:", None, &opts).unwrap();
@@ -256,7 +255,7 @@ mod tests {
             excludes: vec!["*.tmp".into()],
             includes: vec!["*.jpg".into()],
             verbosity: 2,
-            json_log: false,
+            stats: false,
             dry_run: false,
             extra_flags: vec!["--fast-list".into()],
         };

@@ -10,12 +10,20 @@
 //! the receiver from its GLib main loop via `glib::spawn_future_local`, because
 //! `async-channel` is executor-agnostic.
 
+pub mod progress;
+
 use std::process::Stdio;
+use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::job::Progress;
 use crate::security::sanitize;
+
+/// A line parser that turns a sanitized output line into a [`Progress`]
+/// snapshot, or `None` if the line carries no progress info.
+pub type LineParser = Arc<dyn Fn(&str) -> Option<Progress> + Send + Sync>;
 
 /// Events emitted during a process run. Text payloads are already sanitized.
 #[derive(Debug, Clone)]
@@ -25,6 +33,8 @@ pub enum ProcessEvent {
     },
     Stdout(String),
     Stderr(String),
+    /// A parsed progress update (bar/speed/ETA).
+    Progress(Progress),
     Finished {
         success: bool,
         code: Option<i32>,
@@ -47,9 +57,18 @@ impl RunHandle {
     }
 }
 
-/// Spawn `binary` with `args`. Returns immediately with a [`RunHandle`]; the
-/// process is driven on a background thread.
+/// Spawn `binary` with `args`, with no progress parsing.
 pub fn spawn(binary: impl Into<String>, args: Vec<String>) -> RunHandle {
+    spawn_with_parser(binary, args, None)
+}
+
+/// Spawn `binary` with `args` and an optional progress [`LineParser`]. Returns
+/// immediately with a [`RunHandle`]; the process is driven on a background thread.
+pub fn spawn_with_parser(
+    binary: impl Into<String>,
+    args: Vec<String>,
+    parser: Option<LineParser>,
+) -> RunHandle {
     let binary = binary.into();
     let (ev_tx, ev_rx) = async_channel::unbounded::<ProcessEvent>();
     let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
@@ -65,7 +84,7 @@ pub fn spawn(binary: impl Into<String>, args: Vec<String>) -> RunHandle {
                 return;
             }
         };
-        rt.block_on(drive(binary, args, ev_tx, cancel_rx));
+        rt.block_on(drive(binary, args, ev_tx, cancel_rx, parser));
     });
 
     RunHandle {
@@ -79,6 +98,7 @@ async fn drive(
     args: Vec<String>,
     ev: async_channel::Sender<ProcessEvent>,
     cancel_rx: async_channel::Receiver<()>,
+    parser: Option<LineParser>,
 ) {
     let mut child = match Command::new(&binary)
         .args(&args)
@@ -111,22 +131,20 @@ async fn drive(
     let stderr = child.stderr.take().expect("stderr piped");
 
     let ev_out = ev.clone();
+    let parser_out = parser.clone();
     let read_stdout = async move {
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            let _ = ev_out
-                .send(ProcessEvent::Stdout(sanitize::redact(&line)))
-                .await;
+            emit_line(&ev_out, &parser_out, sanitize::redact(&line), false).await;
         }
     };
 
     let ev_err = ev.clone();
+    let parser_err = parser.clone();
     let read_stderr = async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            let _ = ev_err
-                .send(ProcessEvent::Stderr(sanitize::redact(&line)))
-                .await;
+            emit_line(&ev_err, &parser_err, sanitize::redact(&line), true).await;
         }
     };
 
@@ -165,6 +183,28 @@ async fn drive(
                 .await;
         }
     }
+}
+
+/// Emit one output line: a parsed [`ProcessEvent::Progress`] when the parser
+/// recognizes it, otherwise the raw (sanitized) line as stdout/stderr.
+async fn emit_line(
+    ev: &async_channel::Sender<ProcessEvent>,
+    parser: &Option<LineParser>,
+    line: String,
+    is_stderr: bool,
+) {
+    if let Some(p) = parser {
+        if let Some(progress) = p(&line) {
+            let _ = ev.send(ProcessEvent::Progress(progress)).await;
+            return;
+        }
+    }
+    let event = if is_stderr {
+        ProcessEvent::Stderr(line)
+    } else {
+        ProcessEvent::Stdout(line)
+    };
+    let _ = ev.send(event).await;
 }
 
 /// Helper to construct a "failed" exit status portably for the cancel path.
