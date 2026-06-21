@@ -76,7 +76,10 @@ fn main() -> std::io::Result<()> {
     println!("\n== Real copy with live progress (temp dirs only) ==");
     let big = src.join("payload.bin");
     std::fs::write(&big, vec![0u8; 32 * 1024 * 1024])?;
-    let real_opts = RsyncOptions { dry_run: false, ..Default::default() };
+    let real_opts = RsyncOptions {
+        dry_run: false,
+        ..Default::default()
+    };
     let real_args = build_args(&source, &dest, &real_opts).expect("valid command");
     let parser: cascade_core::process::LineParser =
         std::sync::Arc::new(cascade_core::process::progress::parse_rsync);

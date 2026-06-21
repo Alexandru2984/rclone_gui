@@ -11,6 +11,7 @@ use adw::prelude::*;
 use gtk::gio;
 
 use cascade_core::job::{JobSpec, OpKind};
+use cascade_core::logs::LogWriter;
 use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle};
 use cascade_core::security::destructive::RiskLevel;
 use cascade_core::security::path;
@@ -43,12 +44,31 @@ struct Inputs {
     run_btn: gtk::Button,
     dry_btn: gtk::Button,
     cancel_btn: gtk::Button,
+    save_btn: gtk::Button,
 
     /// The currently running child, if any — kept so Cancel can reach it.
     current: RefCell<Option<RunHandle>>,
 
-    /// Callback to refresh sibling screens (e.g. History) after a run.
+    /// Callback to refresh sibling screens (History, Profiles) after a change.
     on_changed: Rc<dyn Fn()>,
+}
+
+/// Public handle to the New Job screen: its root widget plus the ability to
+/// load a spec into it (used by the Profiles screen).
+pub struct NewJobView {
+    root: gtk::Widget,
+    inputs: Rc<Inputs>,
+}
+
+impl NewJobView {
+    pub fn widget(&self) -> &gtk::Widget {
+        &self.root
+    }
+
+    /// Populate the form from a saved profile's spec.
+    pub fn load_spec(&self, spec: &JobSpec) {
+        self.inputs.apply_spec(spec);
+    }
 }
 
 /// Build the New Job screen. `on_changed` is invoked after a run completes so
@@ -57,7 +77,7 @@ pub fn build(
     ctx: Rc<AppCtx>,
     window: adw::ApplicationWindow,
     on_changed: Rc<dyn Fn()>,
-) -> gtk::Widget {
+) -> NewJobView {
     // Prefill with throwaway temp dirs so the screen is immediately runnable.
     let src = std::env::temp_dir().join("cascade_demo_src");
     let dst = std::env::temp_dir().join("cascade_demo_dst");
@@ -70,15 +90,25 @@ pub fn build(
     let tool = adw::ComboRow::builder().title("Tool").build();
     tool.set_model(Some(&gtk::StringList::new(&["rsync", "rclone"])));
     let op = adw::ComboRow::builder().title("Operation").build();
-    op.set_model(Some(&gtk::StringList::new(&["Copy", "Sync (mirror)", "Move"])));
+    op.set_model(Some(&gtk::StringList::new(&[
+        "Copy",
+        "Sync (mirror)",
+        "Move",
+    ])));
 
     let job_group = adw::PreferencesGroup::builder().title("Job").build();
     job_group.add(&name);
     job_group.add(&tool);
     job_group.add(&op);
 
-    let source = adw::EntryRow::builder().title("Source").text(format!("{}/", src.display())).build();
-    let dest = adw::EntryRow::builder().title("Destination").text(format!("{}/", dst.display())).build();
+    let source = adw::EntryRow::builder()
+        .title("Source")
+        .text(format!("{}/", src.display()))
+        .build();
+    let dest = adw::EntryRow::builder()
+        .title("Destination")
+        .text(format!("{}/", dst.display()))
+        .build();
     // Folder-picker buttons are added and wired in `connect_browse` during `wire`.
 
     let paths_group = adw::PreferencesGroup::builder().title("Paths").build();
@@ -103,10 +133,15 @@ pub fn build(
     let cmd_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     cmd_box.append(&preview);
     cmd_box.append(&risk);
-    let cmd_group = adw::PreferencesGroup::builder().title("Command preview").build();
+    let cmd_group = adw::PreferencesGroup::builder()
+        .title("Command preview")
+        .build();
     cmd_group.add(&cmd_box);
 
-    let progress_bar = gtk::ProgressBar::builder().show_text(false).visible(false).build();
+    let progress_bar = gtk::ProgressBar::builder()
+        .show_text(false)
+        .visible(false)
+        .build();
     let progress_label = gtk::Label::builder()
         .xalign(0.0)
         .visible(false)
@@ -118,16 +153,43 @@ pub fn build(
     let progress_group = adw::PreferencesGroup::builder().title("Progress").build();
     progress_group.add(&progress_box);
 
-    let log_view = gtk::TextView::builder().editable(false).monospace(true).build();
+    let log_view = gtk::TextView::builder()
+        .editable(false)
+        .monospace(true)
+        .build();
     let log_buffer = log_view.buffer();
-    let scroller = gtk::ScrolledWindow::builder().min_content_height(200).vexpand(true).child(&log_view).build();
-    let log_group = adw::PreferencesGroup::builder().title("Live output").build();
+    let scroller = gtk::ScrolledWindow::builder()
+        .min_content_height(200)
+        .vexpand(true)
+        .child(&log_view)
+        .build();
+    let log_group = adw::PreferencesGroup::builder()
+        .title("Live output")
+        .build();
     log_group.add(&scroller);
 
-    let cancel_btn = gtk::Button::builder().label("Cancel").css_classes(vec!["pill".to_string(), "destructive-action".to_string()]).sensitive(false).build();
-    let dry_btn = gtk::Button::builder().label("Dry-run").css_classes(vec!["pill".to_string()]).build();
-    let run_btn = gtk::Button::builder().label("Start").css_classes(vec!["pill".to_string(), "suggested-action".to_string()]).build();
-    let btn_box = gtk::Box::builder().halign(gtk::Align::End).spacing(8).build();
+    let save_btn = gtk::Button::builder()
+        .label("Save profile")
+        .css_classes(vec!["pill".to_string()])
+        .build();
+    let cancel_btn = gtk::Button::builder()
+        .label("Cancel")
+        .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
+        .sensitive(false)
+        .build();
+    let dry_btn = gtk::Button::builder()
+        .label("Dry-run")
+        .css_classes(vec!["pill".to_string()])
+        .build();
+    let run_btn = gtk::Button::builder()
+        .label("Start")
+        .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
+        .build();
+    let btn_box = gtk::Box::builder()
+        .halign(gtk::Align::End)
+        .spacing(8)
+        .build();
+    btn_box.append(&save_btn);
     btn_box.append(&cancel_btn);
     btn_box.append(&dry_btn);
     btn_box.append(&run_btn);
@@ -165,13 +227,17 @@ pub fn build(
         run_btn,
         dry_btn,
         cancel_btn,
+        save_btn,
         current: RefCell::new(None),
         on_changed,
     });
 
     inputs.wire();
     inputs.refresh_preview();
-    outer.upcast()
+    NewJobView {
+        root: outer.upcast(),
+        inputs,
+    }
 }
 
 fn browse_button() -> gtk::Button {
@@ -213,6 +279,42 @@ impl Inputs {
             let this = self.clone();
             self.cancel_btn.connect_clicked(move |_| this.cancel());
         }
+        {
+            let this = self.clone();
+            self.save_btn.connect_clicked(move |_| this.save_profile());
+        }
+    }
+
+    /// Save the current form as a named profile.
+    fn save_profile(&self) {
+        match self.read_spec() {
+            Ok(spec) => match self.ctx.store.save_profile(&spec) {
+                Ok(_) => {
+                    self.log_line(&format!("✓ saved profile “{}”", spec.name));
+                    (self.on_changed)();
+                }
+                Err(e) => self.log_line(&format!("✗ could not save profile: {e}")),
+            },
+            Err(e) => self.log_line(&format!("✗ {e}")),
+        }
+    }
+
+    /// Load a spec into the form widgets.
+    fn apply_spec(&self, spec: &JobSpec) {
+        self.name.set_text(&spec.name);
+        self.tool.set_selected(match spec.tool {
+            Tool::Rclone => 1,
+            Tool::Rsync => 0,
+        });
+        self.op.set_selected(match spec.op {
+            OpKind::Copy => 0,
+            OpKind::Sync => 1,
+            OpKind::Move => 2,
+        });
+        self.source.set_text(&spec.source);
+        self.dest.set_text(&spec.destination);
+        self.delete.set_active(spec.delete);
+        self.refresh_preview();
     }
 
     fn cancel(&self) {
@@ -241,7 +343,11 @@ impl Inputs {
             }
         }
 
-        let tool = if self.tool.selected() == 1 { Tool::Rclone } else { Tool::Rsync };
+        let tool = if self.tool.selected() == 1 {
+            Tool::Rclone
+        } else {
+            Tool::Rsync
+        };
         let op = match self.op.selected() {
             1 => OpKind::Sync,
             2 => OpKind::Move,
@@ -250,13 +356,26 @@ impl Inputs {
         let name = {
             let n = self.name.text().to_string();
             if n.trim().is_empty() {
-                format!("{} {} → {}", op.label(), last_component(&source), last_component(&dest))
+                format!(
+                    "{} {} → {}",
+                    op.label(),
+                    last_component(&source),
+                    last_component(&dest)
+                )
             } else {
                 n
             }
         };
 
-        Ok(JobSpec { name, tool, op, source, destination: dest, dry_run: false, delete: self.delete.is_active() })
+        Ok(JobSpec {
+            name,
+            tool,
+            op,
+            source,
+            destination: dest,
+            dry_run: false,
+            delete: self.delete.is_active(),
+        })
     }
 
     /// Recompute the command preview and risk badge.
@@ -283,9 +402,10 @@ impl Inputs {
         let (text, css) = match risk {
             RiskLevel::Safe => ("✓ Safe — nothing is deleted", "success"),
             RiskLevel::Caution => ("• Files may be overwritten at the destination", "warning"),
-            RiskLevel::Destructive => {
-                ("⚠ Destructive — files at the destination may be deleted", "error")
-            }
+            RiskLevel::Destructive => (
+                "⚠ Destructive — files at the destination may be deleted",
+                "error",
+            ),
         };
         self.risk.set_label(text);
         for c in ["success", "warning", "error"] {
@@ -311,7 +431,8 @@ impl Inputs {
                 return;
             }
         };
-        if spec.risk().requires_confirmation() {
+        let confirm = self.ctx.settings.borrow().confirm_destructive;
+        if spec.risk().requires_confirmation() && confirm {
             self.confirm_destructive(&spec.preview().unwrap_or_default());
         } else {
             self.run(false);
@@ -324,17 +445,25 @@ impl Inputs {
              Running a dry-run first lets you preview exactly what would change."
         );
         let dialog = adw::AlertDialog::new(Some("Destructive operation"), Some(&body));
-        dialog.add_responses(&[("cancel", "Cancel"), ("dry", "Dry-run first"), ("run", "Run anyway")]);
+        dialog.add_responses(&[
+            ("cancel", "Cancel"),
+            ("dry", "Dry-run first"),
+            ("run", "Run anyway"),
+        ]);
         dialog.set_response_appearance("run", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("dry"));
         dialog.set_close_response("cancel");
 
         let this = self.clone();
-        dialog.choose(&self.window, gio::Cancellable::NONE, move |resp| match resp.as_str() {
-            "run" => this.run(false),
-            "dry" => this.run(true),
-            _ => {}
-        });
+        dialog.choose(
+            &self.window,
+            gio::Cancellable::NONE,
+            move |resp| match resp.as_str() {
+                "run" => this.run(false),
+                "dry" => this.run(true),
+                _ => {}
+            },
+        );
     }
 
     /// Build the argv, persist a job + run, and stream the process live.
@@ -374,7 +503,11 @@ impl Inputs {
                 return;
             }
         };
-        let run_id = self.ctx.store.start_run(job_id, spec.dry_run, &preview).unwrap_or(-1);
+        let run_id = self
+            .ctx
+            .store
+            .start_run(job_id, spec.dry_run, &preview)
+            .unwrap_or(-1);
 
         self.clear_log();
         self.log_line(&format!("$ {preview}"));
@@ -390,18 +523,40 @@ impl Inputs {
         *self.current.borrow_mut() = Some(handle);
 
         let job_name = spec.name.clone();
+        let preview_log = preview.clone();
         let this = self.clone();
         glib::spawn_future_local(async move {
+            // Per-run on-disk log (sanitized lines only).
+            let mut log = LogWriter::create(&this.ctx.paths.log_dir, run_id).ok();
+            if let Some(w) = log.as_mut() {
+                let _ = w.write_line(&format!("$ {preview_log}"));
+            }
+
             let mut exit_code = None;
             let mut failed = false;
             let mut error_summary: Option<String> = None;
             while let Ok(ev) = events.recv().await {
                 match ev {
-                    ProcessEvent::Started { pid } => this.log_line(&format!("[started pid={pid:?}]")),
+                    ProcessEvent::Started { pid } => {
+                        this.log_line(&format!("[started pid={pid:?}]"))
+                    }
                     ProcessEvent::Progress(p) => this.show_progress(&p),
-                    ProcessEvent::Stdout(line) => this.log_line(&line),
-                    ProcessEvent::Stderr(line) => this.log_line(&format!("! {line}")),
+                    ProcessEvent::Stdout(line) => {
+                        if let Some(w) = log.as_mut() {
+                            let _ = w.write_line(&line);
+                        }
+                        this.log_line(&line);
+                    }
+                    ProcessEvent::Stderr(line) => {
+                        if let Some(w) = log.as_mut() {
+                            let _ = w.write_line(&line);
+                        }
+                        this.log_line(&format!("! {line}"));
+                    }
                     ProcessEvent::Error(e) => {
+                        if let Some(w) = log.as_mut() {
+                            let _ = w.write_line(&format!("[error] {e}"));
+                        }
                         error_summary = Some(e.clone());
                         this.log_line(&format!("[error] {e}"));
                     }
@@ -414,7 +569,17 @@ impl Inputs {
                 }
             }
             let status = if failed { "failed" } else { "completed" };
-            let _ = this.ctx.store.finish_run(run_id, status, exit_code, error_summary.as_deref());
+            let _ = this
+                .ctx
+                .store
+                .finish_run(run_id, status, exit_code, error_summary.as_deref());
+            if let Some(w) = log.as_ref() {
+                let _ = this.ctx.store.insert_run_log(
+                    run_id,
+                    &w.path().to_string_lossy(),
+                    &w.counts_json(),
+                );
+            }
             *this.current.borrow_mut() = None;
             this.set_running(false);
             if !failed {
@@ -428,7 +593,9 @@ impl Inputs {
     /// Render a progress snapshot onto the bar + label.
     fn show_progress(&self, p: &cascade_core::job::Progress) {
         match p.percent {
-            Some(pct) => self.progress_bar.set_fraction((pct as f64 / 100.0).clamp(0.0, 1.0)),
+            Some(pct) => self
+                .progress_bar
+                .set_fraction((pct as f64 / 100.0).clamp(0.0, 1.0)),
             None => self.progress_bar.pulse(),
         }
         let mut parts = Vec::new();
@@ -457,6 +624,7 @@ impl Inputs {
     fn set_running(&self, running: bool) {
         self.run_btn.set_sensitive(!running);
         self.dry_btn.set_sensitive(!running);
+        self.save_btn.set_sensitive(!running);
         self.cancel_btn.set_sensitive(running);
         if running {
             self.progress_bar.set_fraction(0.0);
@@ -474,7 +642,9 @@ impl Inputs {
         let mut end = self.log_buffer.end_iter();
         self.log_buffer.insert(&mut end, text);
         self.log_buffer.insert(&mut end, "\n");
-        let mark = self.log_buffer.create_mark(None, &self.log_buffer.end_iter(), false);
+        let mark = self
+            .log_buffer
+            .create_mark(None, &self.log_buffer.end_iter(), false);
         self.log_view.scroll_mark_onscreen(&mark);
     }
 }
@@ -518,7 +688,11 @@ fn op_str(op: OpKind) -> &'static str {
 
 fn last_component(p: &str) -> String {
     let t = p.trim_end_matches('/');
-    t.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(t).to_string()
+    t.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(t)
+        .to_string()
 }
 
 /// Human-readable transfer rate from bytes/second.

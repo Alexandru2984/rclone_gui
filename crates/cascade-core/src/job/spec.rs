@@ -85,7 +85,10 @@ impl JobSpec {
                     OpKind::Sync => RcloneOp::Sync,
                     OpKind::Move => RcloneOp::Move,
                 };
-                let opts = RcloneOptions { dry_run: self.dry_run, ..Default::default() };
+                let opts = RcloneOptions {
+                    dry_run: self.dry_run,
+                    ..Default::default()
+                };
                 rclone_cmd::build_args(op, &self.source, Some(&self.destination), &opts)
             }
             Tool::Rsync => {
@@ -136,7 +139,10 @@ mod tests {
 
     #[test]
     fn rclone_sync_is_destructive() {
-        assert_eq!(spec(Tool::Rclone, OpKind::Sync).risk(), RiskLevel::Destructive);
+        assert_eq!(
+            spec(Tool::Rclone, OpKind::Sync).risk(),
+            RiskLevel::Destructive
+        );
     }
 
     #[test]

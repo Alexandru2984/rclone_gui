@@ -28,11 +28,23 @@ fn parse_compact_duration(s: &str) -> Option<u64> {
         Regex::new(r"(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>[\d.]+)s)?").unwrap()
     });
     let caps = re.captures(s)?;
-    let h: u64 = caps.name("h").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let m: u64 = caps.name("m").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let sec: f64 = caps.name("s").and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+    let h: u64 = caps
+        .name("h")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let m: u64 = caps
+        .name("m")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let sec: f64 = caps
+        .name("s")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0.0);
     let total = h * 3600 + m * 60 + sec as u64;
-    if total == 0 && caps.name("h").is_none() && caps.name("m").is_none() && caps.name("s").is_none()
+    if total == 0
+        && caps.name("h").is_none()
+        && caps.name("m").is_none()
+        && caps.name("s").is_none()
     {
         None
     } else {
@@ -64,12 +76,13 @@ pub fn parse_rsync(line: &str) -> Option<Progress> {
         .unwrap()
     });
     let caps = re.captures(line)?;
-    let bytes_transferred =
-        caps["bytes"].replace(',', "").parse::<u64>().unwrap_or(0);
+    let bytes_transferred = caps["bytes"].replace(',', "").parse::<u64>().unwrap_or(0);
     let percent = caps["pct"].parse::<f32>().ok();
     let rate: f64 = caps["rate"].parse().unwrap_or(0.0);
     let speed_bps = Some((rate * unit_factor(&caps["unit"])) as u64);
-    let eta_secs = caps.name("eta").and_then(|m| parse_clock_duration(m.as_str()));
+    let eta_secs = caps
+        .name("eta")
+        .and_then(|m| parse_clock_duration(m.as_str()));
 
     Some(Progress {
         percent,
@@ -121,7 +134,8 @@ mod tests {
 
     #[test]
     fn rsync_line_parses() {
-        let p = parse_rsync("   1,234,567  45%   12.34MB/s    0:00:12 (xfr#3, to-chk=10/20)").unwrap();
+        let p =
+            parse_rsync("   1,234,567  45%   12.34MB/s    0:00:12 (xfr#3, to-chk=10/20)").unwrap();
         assert_eq!(p.bytes_transferred, 1_234_567);
         assert_eq!(p.percent, Some(45.0));
         assert_eq!(p.eta_secs, Some(12));
@@ -143,10 +157,9 @@ mod tests {
 
     #[test]
     fn rclone_line_parses() {
-        let p = parse_rclone(
-            "Transferred:   \t  1.000 MiB / 4.000 MiB, 25%, 2.000 MiB/s, ETA 2m42s",
-        )
-        .unwrap();
+        let p =
+            parse_rclone("Transferred:   \t  1.000 MiB / 4.000 MiB, 25%, 2.000 MiB/s, ETA 2m42s")
+                .unwrap();
         assert_eq!(p.percent, Some(25.0));
         assert_eq!(p.bytes_transferred, 1024 * 1024);
         assert_eq!(p.speed_bps, Some(2 * 1024 * 1024));

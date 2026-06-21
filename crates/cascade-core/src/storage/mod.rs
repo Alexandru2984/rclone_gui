@@ -6,7 +6,7 @@
 pub mod repo;
 pub mod schema;
 
-pub use repo::RunRecord;
+pub use repo::{ProfileRecord, RunRecord};
 
 use rusqlite::Connection;
 

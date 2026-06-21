@@ -34,7 +34,10 @@ impl HistoryView {
         column.append(&empty);
         column.append(&list);
 
-        let clamp = adw::Clamp::builder().maximum_size(720).child(&column).build();
+        let clamp = adw::Clamp::builder()
+            .maximum_size(720)
+            .child(&column)
+            .build();
         let scroller = gtk::ScrolledWindow::builder()
             .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -45,7 +48,12 @@ impl HistoryView {
         scroller.set_margin_start(12);
         scroller.set_margin_end(12);
 
-        Self { root: scroller.upcast(), list, empty, ctx }
+        Self {
+            root: scroller.upcast(),
+            list,
+            empty,
+            ctx,
+        }
     }
 
     pub fn widget(&self) -> &gtk::Widget {

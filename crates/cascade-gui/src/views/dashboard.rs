@@ -8,10 +8,16 @@ pub fn build() -> gtk::Widget {
         .description("Cascade orchestrates these external programs")
         .build();
 
-    group.add(&tool_row("rclone", cascade_core::rclone::detect().map(|i| i.version),
-        "not installed — install it to enable cloud remotes"));
-    group.add(&tool_row("rsync", cascade_core::rsync::detect().map(|i| i.version),
-        "not installed"));
+    group.add(&tool_row(
+        "rclone",
+        cascade_core::rclone::detect().map(|i| i.version),
+        "not installed — install it to enable cloud remotes",
+    ));
+    group.add(&tool_row(
+        "rsync",
+        cascade_core::rsync::detect().map(|i| i.version),
+        "not installed",
+    ));
 
     let page = adw::PreferencesPage::new();
     page.add(&group);
@@ -34,7 +40,11 @@ fn tool_row(name: &str, version: Option<String>, missing_hint: &str) -> adw::Act
 }
 
 fn status_icon(ok: bool) -> gtk::Image {
-    let name = if ok { "emblem-ok-symbolic" } else { "dialog-warning-symbolic" };
+    let name = if ok {
+        "emblem-ok-symbolic"
+    } else {
+        "dialog-warning-symbolic"
+    };
     let img = gtk::Image::from_icon_name(name);
     img.add_css_class(if ok { "success" } else { "warning" });
     img

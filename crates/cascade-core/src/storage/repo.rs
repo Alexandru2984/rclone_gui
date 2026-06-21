@@ -7,6 +7,7 @@
 use rusqlite::params;
 
 use crate::error::Result;
+use crate::job::JobSpec;
 
 use super::Store;
 
@@ -30,6 +31,14 @@ pub struct RunRecord {
     pub exit_code: Option<i64>,
     pub started_at: Option<i64>,
     pub ended_at: Option<i64>,
+}
+
+/// A saved profile and its reconstructed spec.
+#[derive(Debug, Clone)]
+pub struct ProfileRecord {
+    pub id: i64,
+    pub name: String,
+    pub spec: JobSpec,
 }
 
 impl Store {
@@ -79,6 +88,88 @@ impl Store {
         Ok(())
     }
 
+    /// Record the on-disk log for a finished run.
+    pub fn insert_run_log(
+        &self,
+        run_id: i64,
+        log_path: &str,
+        level_counts_json: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO run_logs (run_id, log_path, level_counts_json) VALUES (?1, ?2, ?3)",
+            params![run_id, log_path, level_counts_json],
+        )?;
+        Ok(())
+    }
+
+    /// Save (or update by name) a reusable profile from a [`JobSpec`].
+    pub fn save_profile(&self, spec: &JobSpec) -> Result<i64> {
+        let options_json = serde_json::to_string(spec)?;
+        let kind = match spec.tool {
+            crate::Tool::Rclone => "rclone",
+            crate::Tool::Rsync => "rsync",
+        };
+        let operation = match spec.op {
+            crate::job::OpKind::Copy => "copy",
+            crate::job::OpKind::Sync => "sync",
+            crate::job::OpKind::Move => "move",
+        };
+        let now = now();
+        self.conn.execute(
+            "INSERT INTO profiles
+                (name, kind, operation, source, destination, options_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+             ON CONFLICT(name) DO UPDATE SET
+                kind = excluded.kind, operation = excluded.operation,
+                source = excluded.source, destination = excluded.destination,
+                options_json = excluded.options_json, updated_at = excluded.updated_at",
+            params![
+                spec.name,
+                kind,
+                operation,
+                spec.source,
+                spec.destination,
+                options_json,
+                now
+            ],
+        )?;
+        // last_insert_rowid is 0 on a pure UPDATE; resolve the id by name.
+        let id: i64 = self.conn.query_row(
+            "SELECT id FROM profiles WHERE name = ?1",
+            [&spec.name],
+            |r| r.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// All saved profiles, with their reconstructed specs, newest first.
+    pub fn list_profiles(&self) -> Result<Vec<ProfileRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, options_json FROM profiles ORDER BY updated_at DESC")?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let name: String = row.get(1)?;
+            let options_json: String = row.get(2)?;
+            Ok((id, name, options_json))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, name, options_json) = row?;
+            if let Ok(spec) = serde_json::from_str::<JobSpec>(&options_json) {
+                out.push(ProfileRecord { id, name, spec });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Delete a profile by id.
+    pub fn delete_profile(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM profiles WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     /// Most recent runs, newest first, for the History screen.
     pub fn recent_runs(&self, limit: i64) -> Result<Vec<RunRecord>> {
         let mut stmt = self.conn.prepare(
@@ -114,9 +205,18 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
 
         let job_id = store
-            .insert_job("nightly", "rsync", "sync", "/src/", "/dst/", r#"{"dry_run":false}"#)
+            .insert_job(
+                "nightly",
+                "rsync",
+                "sync",
+                "/src/",
+                "/dst/",
+                r#"{"dry_run":false}"#,
+            )
             .unwrap();
-        let run_id = store.start_run(job_id, true, "rsync -a -n /src/ /dst/").unwrap();
+        let run_id = store
+            .start_run(job_id, true, "rsync -a -n /src/ /dst/")
+            .unwrap();
 
         // Mid-run it shows as running.
         let runs = store.recent_runs(10).unwrap();
@@ -125,7 +225,9 @@ mod tests {
         assert!(runs[0].dry_run);
         assert_eq!(runs[0].job_name, "nightly");
 
-        store.finish_run(run_id, "completed", Some(0), None).unwrap();
+        store
+            .finish_run(run_id, "completed", Some(0), None)
+            .unwrap();
         let runs = store.recent_runs(10).unwrap();
         assert_eq!(runs[0].status, "completed");
         assert_eq!(runs[0].exit_code, Some(0));
@@ -133,9 +235,70 @@ mod tests {
     }
 
     #[test]
+    fn profiles_save_list_update_delete() {
+        use crate::job::OpKind;
+        use crate::Tool;
+
+        let store = Store::open_in_memory().unwrap();
+        let mut spec = JobSpec {
+            name: "photos".into(),
+            tool: Tool::Rsync,
+            op: OpKind::Sync,
+            source: "/src/".into(),
+            destination: "/dst/".into(),
+            dry_run: false,
+            delete: false,
+        };
+        let id1 = store.save_profile(&spec).unwrap();
+
+        let profiles = store.list_profiles().unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "photos");
+        assert_eq!(profiles[0].spec.op, OpKind::Sync);
+
+        // Saving under the same name updates in place (no duplicate).
+        spec.op = OpKind::Copy;
+        let id2 = store.save_profile(&spec).unwrap();
+        assert_eq!(id1, id2);
+        let profiles = store.list_profiles().unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].spec.op, OpKind::Copy);
+
+        store.delete_profile(id1).unwrap();
+        assert!(store.list_profiles().unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_log_can_be_recorded() {
+        let store = Store::open_in_memory().unwrap();
+        let job = store
+            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .unwrap();
+        let run = store.start_run(job, false, "cmd").unwrap();
+        store
+            .insert_run_log(
+                run,
+                "/tmp/run-1.log",
+                r#"{"errors":0,"warnings":1,"info":3}"#,
+            )
+            .unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT count(*) FROM run_logs WHERE run_id = ?1",
+                [run],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn history_is_newest_first() {
         let store = Store::open_in_memory().unwrap();
-        let j = store.insert_job("j", "rsync", "copy", "/a", "/b", "{}").unwrap();
+        let j = store
+            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .unwrap();
         let r1 = store.start_run(j, false, "cmd1").unwrap();
         let r2 = store.start_run(j, false, "cmd2").unwrap();
         let runs = store.recent_runs(10).unwrap();
