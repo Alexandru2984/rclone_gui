@@ -1,7 +1,9 @@
 //! Job model: a configured operation plus the live status of its current run.
 
+pub mod spec;
 pub mod state;
 
+pub use spec::{JobSpec, OpKind};
 pub use state::JobStatus;
 
 use serde::{Deserialize, Serialize};

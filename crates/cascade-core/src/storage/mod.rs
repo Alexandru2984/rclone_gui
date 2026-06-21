@@ -3,7 +3,10 @@
 //! Holds job history, profiles, settings, and log metadata. **No secrets** are
 //! stored here — see the threat model.
 
+pub mod repo;
 pub mod schema;
+
+pub use repo::RunRecord;
 
 use rusqlite::Connection;
 

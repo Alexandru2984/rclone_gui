@@ -20,7 +20,8 @@ pub mod storage;
 pub use error::{CoreError, Result};
 
 /// Tools Cascade orchestrates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Tool {
     Rclone,
     Rsync,
