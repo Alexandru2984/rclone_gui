@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/cascade-core", "crates/cascade-gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "GPL-3.0-or-later"
+authors = ["Alex Mihai <984.alexmihai@gmail.com>"]
+repository = "https://github.com/alexmihai/cascade"
+
+[workspace.dependencies]
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
