@@ -5,4 +5,5 @@ pub mod dashboard;
 pub mod history;
 pub mod new_job;
 pub mod profiles;
+pub mod remote_browser;
 pub mod settings;

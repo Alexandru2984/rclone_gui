@@ -10,6 +10,7 @@ use adw::prelude::*;
 use cascade_core::job::JobSpec;
 
 use crate::ctx::AppCtx;
+use crate::views::remote_browser::{PickTarget, RemoteBrowserView};
 use crate::views::{dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings};
 
 pub struct MainWindow;
@@ -55,6 +56,20 @@ impl MainWindow {
         let profiles = ProfilesView::new(ctx.clone(), on_load);
         *profiles_slot.borrow_mut() = Some(profiles.clone());
 
+        // Remote browser: picking a path fills New Job and switches to it.
+        let on_pick: Rc<dyn Fn(PickTarget, String)> = {
+            let new_job = new_job.clone();
+            let stack = stack.clone();
+            Rc::new(move |target, path| {
+                match target {
+                    PickTarget::Source => new_job.set_source(&path),
+                    PickTarget::Destination => new_job.set_destination(&path),
+                }
+                stack.set_visible_child_name("new-job");
+            })
+        };
+        let remotes = RemoteBrowserView::new(ctx.clone(), on_pick);
+
         stack.add_titled_with_icon(
             &dashboard::build(),
             Some("dashboard"),
@@ -66,6 +81,12 @@ impl MainWindow {
             Some("new-job"),
             "New Job",
             "list-add-symbolic",
+        );
+        stack.add_titled_with_icon(
+            remotes.widget(),
+            Some("remotes"),
+            "Remotes",
+            "network-server-symbolic",
         );
         stack.add_titled_with_icon(
             profiles.widget(),

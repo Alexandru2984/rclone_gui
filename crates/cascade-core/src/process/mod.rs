@@ -93,6 +93,41 @@ pub fn spawn_with_parser(
     }
 }
 
+/// Run `binary args` to completion off the calling thread and return its
+/// captured stdout on success, or an error string. For one-shot commands like
+/// `rclone listremotes` / `lsjson` whose whole output is parsed at once.
+pub fn capture(
+    binary: impl Into<String>,
+    args: Vec<String>,
+) -> async_channel::Receiver<std::result::Result<String, String>> {
+    let binary = binary.into();
+    let (tx, rx) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        let result = std::process::Command::new(&binary)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output();
+        let msg = match result {
+            Ok(out) if out.status.success() => {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                Err(sanitize::redact(&format!(
+                    "{binary} failed: {}",
+                    err.trim()
+                )))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(format!(
+                "'{binary}' not found — is it installed and on PATH?"
+            )),
+            Err(e) => Err(format!("failed to run '{binary}': {e}")),
+        };
+        let _ = tx.send_blocking(msg);
+    });
+    rx
+}
+
 async fn drive(
     binary: String,
     args: Vec<String>,

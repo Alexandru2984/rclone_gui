@@ -69,6 +69,18 @@ impl NewJobView {
     pub fn load_spec(&self, spec: &JobSpec) {
         self.inputs.apply_spec(spec);
     }
+
+    /// Set the source path (used by the Remote/Local browser pickers).
+    pub fn set_source(&self, path: &str) {
+        self.inputs.source.set_text(path);
+        self.inputs.refresh_preview();
+    }
+
+    /// Set the destination path (used by the Remote/Local browser pickers).
+    pub fn set_destination(&self, path: &str) {
+        self.inputs.dest.set_text(path);
+        self.inputs.refresh_preview();
+    }
 }
 
 /// Build the New Job screen. `on_changed` is invoked after a run completes so
