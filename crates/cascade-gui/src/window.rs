@@ -164,9 +164,33 @@ impl MainWindow {
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
+        if let Some(banner) = missing_tools_banner() {
+            toolbar.add_top_bar(&banner);
+        }
         toolbar.set_content(Some(&stack));
         window.set_content(Some(&toolbar));
 
         window
     }
+}
+
+/// A warning banner if rclone/rsync are not on PATH, so users aren't surprised
+/// by jobs failing with exit status 127.
+fn missing_tools_banner() -> Option<adw::Banner> {
+    let mut missing = Vec::new();
+    if cascade_core::rsync::detect().is_none() {
+        missing.push("rsync");
+    }
+    if cascade_core::rclone::detect().is_none() {
+        missing.push("rclone");
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let banner = adw::Banner::new(&format!(
+        "{} not found on PATH — related jobs will fail until it is installed.",
+        missing.join(" and ")
+    ));
+    banner.set_revealed(true);
+    Some(banner)
 }
