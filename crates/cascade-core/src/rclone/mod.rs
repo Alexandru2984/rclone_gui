@@ -6,7 +6,9 @@
 pub mod browse;
 pub mod command;
 pub mod detect;
+pub mod mount;
 
 pub use browse::Entry;
 pub use command::{preview, RcloneOp, RcloneOptions};
 pub use detect::{detect, ToolInfo};
+pub use mount::MountOptions;

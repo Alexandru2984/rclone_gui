@@ -10,6 +10,7 @@ use adw::prelude::*;
 use cascade_core::job::JobSpec;
 
 use crate::ctx::AppCtx;
+use crate::views::mounts::MountsView;
 use crate::views::remote_browser::{PickTarget, RemoteBrowserView};
 use crate::views::{dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings};
 
@@ -69,6 +70,7 @@ impl MainWindow {
             })
         };
         let remotes = RemoteBrowserView::new(ctx.clone(), on_pick);
+        let mounts = MountsView::new(ctx.clone(), window.clone());
 
         stack.add_titled_with_icon(
             &dashboard::build(),
@@ -87,6 +89,12 @@ impl MainWindow {
             Some("remotes"),
             "Remotes",
             "network-server-symbolic",
+        );
+        stack.add_titled_with_icon(
+            mounts.widget(),
+            Some("mounts"),
+            "Mounts",
+            "drive-harddisk-symbolic",
         );
         stack.add_titled_with_icon(
             profiles.widget(),
