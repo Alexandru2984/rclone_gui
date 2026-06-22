@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Cascade
+GenericName=Backup & Sync
+Comment=Native GUI for rclone and rsync — backups, syncs, mounts
+Icon=io.github.alexmihai.Cascade
+Exec=cascade
+Terminal=false
+Categories=Utility;Archiving;FileTools;
+Keywords=rclone;rsync;backup;sync;mirror;cloud;mount;copy;
+StartupNotify=true
+# Must match the GApplication application-id so the shell associates the
+# window with this entry on BOTH X11 (WM_CLASS) and Wayland (xdg app_id).
+# This is what makes desktop notifications show the app name + icon.
+StartupWMClass=io.github.alexmihai.Cascade

@@ -21,3 +21,20 @@ serde_json.workspace = true
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 glib = "0.20"
+
+# Debian/Ubuntu packaging via `cargo deb -p cascade-gui`.
+# Runtime shared-lib deps (GTK4, libadwaita) are auto-detected with "$auto";
+# rclone/rsync are runtime tools, recommended rather than hard dependencies.
+[package.metadata.deb]
+name = "cascade"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+recommends = "rclone, rsync"
+extended-description = "Native GTK4 / libadwaita GUI for rclone and rsync: backups, syncs, copies, mounts and remote management. Runs on both Wayland and X11."
+assets = [
+    ["target/release/cascade", "usr/bin/", "755"],
+    ["../../packaging/io.github.alexmihai.Cascade.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/io.github.alexmihai.Cascade.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../packaging/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+]

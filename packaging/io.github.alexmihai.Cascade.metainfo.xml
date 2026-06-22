@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.alexmihai.Cascade</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Cascade</name>
+  <summary>Native GUI for rclone and rsync</summary>
+
+  <description>
+    <p>
+      Cascade is a lightweight, native GTK4 / libadwaita application for driving
+      rclone and rsync: backups, syncs, copies, mounts and remote management.
+      It is friendly for everyday use yet exposes the real power of both tools,
+      and always shows the exact command it runs.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Copy, sync (mirror) and move with rclone or rsync</li>
+      <li>Browse cloud remotes and pick paths without typing</li>
+      <li>Live progress (speed, ETA) and cancellable jobs</li>
+      <li>Dry-run by default and confirmation gates for destructive operations</li>
+      <li>Reusable profiles, run history, and per-run logs</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.alexmihai.Cascade.desktop</launchable>
+
+  <url type="homepage">https://github.com/alexmihai/cascade</url>
+  <url type="bugtracker">https://github.com/alexmihai/cascade/issues</url>
+
+  <!-- Works identically on Wayland and X11 (GTK4/GDK). -->
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">576</display_length>
+  </requires>
+
+  <categories>
+    <category>Utility</category>
+    <category>System</category>
+    <category>Archiving</category>
+  </categories>
+
+  <keywords>
+    <keyword>rclone</keyword>
+    <keyword>rsync</keyword>
+    <keyword>backup</keyword>
+    <keyword>sync</keyword>
+    <keyword>cloud</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1" />
+
+  <developer id="io.github.alexmihai">
+    <name>Alex Mihai</name>
+  </developer>
+
+  <releases>
+    <release version="0.1.0" date="2026-06-22">
+      <description>
+        <p>Initial development release: core pipeline, New Job flow, live
+        progress, profiles, history, settings, and an rclone remote browser.</p>
+      </description>
+    </release>
+  </releases>
+</component>

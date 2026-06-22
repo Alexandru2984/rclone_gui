@@ -91,6 +91,48 @@ cargo run -p cascade-gui
 
 ---
 
+## Display servers: Wayland & X11
+
+Cascade is GTK4/GDK, so it runs natively on **both Wayland and X11** with no code
+differences — GDK picks the backend automatically. To force one for testing:
+
+```bash
+GDK_BACKEND=wayland cargo run -p cascade-gui
+GDK_BACKEND=x11     cargo run -p cascade-gui
+```
+
+For **desktop notifications** and the **app icon** to appear correctly on either
+backend, the app must be identified by an installed `.desktop` file whose name
+matches the application id (`io.github.alexmihai.Cascade`). Running the raw
+`target/debug/cascade` binary without installing it shows a generic icon/name;
+install it (below) for the full, identical experience on both.
+
+---
+
+## Install & packaging
+
+### Quick user install (no root) — recommended for trying it
+```bash
+packaging/install-local.sh            # build + install under ~/.local
+packaging/install-local.sh --uninstall
+```
+Installs the binary, `.desktop`, icon and AppStream metainfo under `~/.local`,
+so it shows up in your app menu with a proper icon and working notifications.
+
+### Debian / Ubuntu `.deb`
+```bash
+cargo install cargo-deb        # once
+cargo deb -p cascade-gui       # produces target/debian/cascade_0.1.0_*.deb
+sudo apt install ./target/debian/cascade_*.deb
+```
+`rclone` and `rsync` are listed as **Recommends** (runtime tools), GTK/libadwaita
+runtime libraries are auto-detected.
+
+Packaging assets live in [`packaging/`](packaging/): the desktop entry, the
+AppStream metainfo, and the scalable icon.
+
+---
+
 ## Roadmap
 
 `Phase 1 MVP` ✅ (this repo) → `Phase 2 rclone advanced` (remote browser, local RC

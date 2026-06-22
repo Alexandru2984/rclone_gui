@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#1c71d8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+
+  <!-- Three descending "cascade" chevrons -->
+  <g fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 40 L64 60 L88 40" opacity="0.55"/>
+    <path d="M40 62 L64 82 L88 62" opacity="0.8"/>
+    <path d="M40 84 L64 104 L88 84" opacity="1"/>
+  </g>
+</svg>

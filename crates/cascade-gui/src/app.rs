@@ -3,13 +3,19 @@
 use adw::prelude::*;
 use adw::Application;
 
-use cascade_core::config::APP_ID;
+use cascade_core::config::{APP_ID, APP_NAME};
 
 use crate::ctx::{apply_theme, AppCtx};
 use crate::window::MainWindow;
 
 pub fn run() -> glib::ExitCode {
     let ctx = AppCtx::new();
+
+    // Set a human-readable application name. In GTK4 the window icon and the
+    // desktop-notification identity are resolved from the installed .desktop
+    // file matched by the GApplication id (works on both X11 and Wayland), so
+    // there is no per-window icon API to call here.
+    glib::set_application_name(APP_NAME);
 
     let app = Application::builder().application_id(APP_ID).build();
 
