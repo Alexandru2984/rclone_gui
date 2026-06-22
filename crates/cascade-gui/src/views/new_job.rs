@@ -819,26 +819,53 @@ impl Inputs {
     }
 }
 
-/// Add a folder-picker button as a suffix on `row` and open a native
-/// folder chooser when it is clicked.
+/// Add folder- and file-picker buttons as suffixes on `row`. The folder picker
+/// covers directory transfers; the file picker covers single-file transfers
+/// (e.g. one large database dump).
 fn connect_browse(inputs: &Rc<Inputs>, row: &adw::EntryRow) {
-    let button = browse_button();
-    row.add_suffix(&button);
-    let this = inputs.clone();
-    let target = row.clone();
-    button.connect_clicked(move |_| {
-        let dialog = gtk::FileDialog::builder().title("Select folder").build();
-        let entry = target.clone();
-        let inner = this.clone();
-        dialog.select_folder(Some(&this.window), gio::Cancellable::NONE, move |res| {
-            if let Ok(file) = res {
-                if let Some(p) = file.path() {
-                    entry.set_text(&p.to_string_lossy());
-                    inner.refresh_preview();
+    let folder = browse_button();
+    folder.set_tooltip_text(Some("Choose a folder"));
+    let file = gtk::Button::from_icon_name("text-x-generic-symbolic");
+    file.add_css_class("flat");
+    file.set_valign(gtk::Align::Center);
+    file.set_tooltip_text(Some("Choose a single file"));
+    row.add_suffix(&file);
+    row.add_suffix(&folder);
+
+    {
+        let this = inputs.clone();
+        let target = row.clone();
+        folder.connect_clicked(move |_| {
+            let dialog = gtk::FileDialog::builder().title("Select folder").build();
+            let entry = target.clone();
+            let inner = this.clone();
+            dialog.select_folder(Some(&this.window), gio::Cancellable::NONE, move |res| {
+                if let Ok(f) = res {
+                    if let Some(p) = f.path() {
+                        entry.set_text(&p.to_string_lossy());
+                        inner.refresh_preview();
+                    }
                 }
-            }
+            });
         });
-    });
+    }
+    {
+        let this = inputs.clone();
+        let target = row.clone();
+        file.connect_clicked(move |_| {
+            let dialog = gtk::FileDialog::builder().title("Select file").build();
+            let entry = target.clone();
+            let inner = this.clone();
+            dialog.open(Some(&this.window), gio::Cancellable::NONE, move |res| {
+                if let Ok(f) = res {
+                    if let Some(p) = f.path() {
+                        entry.set_text(&p.to_string_lossy());
+                        inner.refresh_preview();
+                    }
+                }
+            });
+        });
+    }
 }
 
 fn kind_str(tool: Tool) -> &'static str {
