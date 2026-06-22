@@ -1,66 +1,25 @@
 //! Parsing user-supplied custom flags into individual argv tokens.
 //!
 //! Cascade never runs a shell, so the danger is not shell injection but
-//! malformed/garbage tokens. We do a small quote-aware split (supporting
-//! `'single'` and `"double"` quotes) and reject control characters. The result
-//! is a `Vec<String>` where each element becomes exactly one argv item.
+//! malformed tokens. We use `shlex` for correct POSIX quoting/escaping, then
+//! reject NUL bytes (which cannot appear in an argv item anyway).
 
 use crate::error::{CoreError, Result};
 
-/// Split a custom-flags string into argv tokens.
-///
-/// - Whitespace separates tokens.
-/// - Single and double quotes group a token and may contain spaces.
-/// - Control characters (including newlines and NUL) are rejected.
+/// Split a custom-flags string into argv tokens using POSIX shell rules
+/// (single/double quotes and backslash escapes), via the `shlex` crate.
 pub fn parse(input: &str) -> Result<Vec<String>> {
-    if input.chars().any(|c| c.is_control()) {
+    if input.contains('\0') {
         return Err(CoreError::InvalidCommand(
-            "custom flags contain control characters".into(),
+            "custom flags contain a NUL byte".into(),
         ));
     }
-
-    let mut tokens = Vec::new();
-    let mut cur = String::new();
-    let mut in_token = false;
-    let mut quote: Option<char> = None;
-
-    for c in input.chars() {
-        match quote {
-            Some(q) => {
-                if c == q {
-                    quote = None;
-                } else {
-                    cur.push(c);
-                }
-            }
-            None => match c {
-                '\'' | '"' => {
-                    quote = Some(c);
-                    in_token = true;
-                }
-                c if c.is_whitespace() => {
-                    if in_token {
-                        tokens.push(std::mem::take(&mut cur));
-                        in_token = false;
-                    }
-                }
-                c => {
-                    cur.push(c);
-                    in_token = true;
-                }
-            },
-        }
+    match shlex::split(input) {
+        Some(tokens) => Ok(tokens),
+        None => Err(CoreError::InvalidCommand(
+            "could not parse custom flags (check quotes/escapes)".into(),
+        )),
     }
-
-    if quote.is_some() {
-        return Err(CoreError::InvalidCommand(
-            "custom flags have an unclosed quote".into(),
-        ));
-    }
-    if in_token {
-        tokens.push(cur);
-    }
-    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -90,12 +49,22 @@ mod tests {
     }
 
     #[test]
+    fn honors_backslash_escapes() {
+        // shlex understands escaped quotes inside double quotes.
+        assert_eq!(
+            parse(r#"--exclude "a\"b""#).unwrap(),
+            vec!["--exclude", "a\"b"]
+        );
+        assert_eq!(parse(r"a\ b").unwrap(), vec!["a b"]);
+    }
+
+    #[test]
     fn unclosed_quote_is_error() {
         assert!(parse("--exclude 'oops").is_err());
     }
 
     #[test]
-    fn control_chars_rejected() {
-        assert!(parse("--flag\nrm -rf").is_err());
+    fn nul_byte_rejected() {
+        assert!(parse("--flag\0bad").is_err());
     }
 }
