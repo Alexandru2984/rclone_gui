@@ -27,18 +27,28 @@ responsible for what you run. Cascade's safety guarantees:
 
 ---
 
-## Features (MVP / Phase 1 — in this repo)
+## Features
 
-- Detect `rclone` and `rsync` and show versions.
-- Build safe `copy`/`sync` commands for both tools (argv, tested).
-- Async process runner with **live, sanitized** stdout/stderr streaming (UI never blocks).
-- Path validation, destructive-op classification, secret redaction — all unit-tested.
-- Job state machine (pending → running → completed/failed/cancelled).
-- SQLite (bundled) job history / profiles / settings store with migrations.
-- Command **preview** and **dry-run** everywhere.
+Eight screens: **Dashboard · Backup Assistant · New Job · Remotes · Mounts · Profiles · History · Settings**.
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for Phases 2–5 (remote browser, rclone RC daemon,
-mounts, Backup Assistant, SSH rsync, packaging).
+- **Both tools**: `copy` / `sync (mirror)` / `move` for rclone and rsync — built as
+  argument vectors, **never a shell string** (no injection).
+- **New Job**: tool/operation pickers, folder choosers, a live **command preview**, a
+  **risk badge**, **dry-run** + **Start**, live **progress** (speed/ETA), **Cancel**, and a
+  collapsible **Advanced** section (include/exclude, transfers/checkers/bwlimit/retries,
+  checksum, compress, SSH port, and validated **custom flags**).
+- **Backup Assistant**: guided scenarios (photos, projects, Google Drive, VPS over SSH,
+  mirror, restore…) that preconfigure a job and hand it to New Job.
+- **Remotes**: browse rclone remotes and pick paths without typing (async `lsjson`).
+- **Mounts**: mount a remote onto a local folder and manage active mounts (clean unmount).
+- **Profiles / History**: save & reload jobs; review past runs with status and timing.
+- **Settings**: light/dark/system theme, destructive-confirmation toggle, parallelism.
+- **Safety**: path guards, destructive-op confirmation, **secret-sanitized** live + on-disk
+  logs, desktop notifications, and an optional **local-only `rclone rcd`** daemon
+  (loopback + random credentials).
+
+All business logic lives in `cascade-core` and is covered by **87 unit tests**.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for phase status.
 
 ---
 
@@ -131,17 +141,40 @@ runtime libraries are auto-detected.
 Packaging assets live in [`packaging/`](packaging/): the desktop entry, the
 AppStream metainfo, and the scalable icon.
 
+### AppImage (universal)
+An AppImage gives a single portable binary across the distro family. Because
+Cascade *spawns* `rclone`/`rsync` at runtime, the AppImage relies on those being
+present on the host `PATH` (they are not bundled). Sketch with
+[`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy) + its GTK plugin:
+```bash
+cargo build -p cascade-gui --release
+linuxdeploy --appdir AppDir \
+  --executable target/release/cascade \
+  --desktop-file packaging/io.github.alexmihai.Cascade.desktop \
+  --icon-file packaging/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg \
+  --plugin gtk --output appimage
+```
+Flatpak is intentionally not the primary target: sandboxed apps cannot freely
+spawn host `rclone`/`rsync` without `flatpak-spawn --host` or bundling them.
+
+### Screenshots
+Not committed yet. To capture on GNOME: run `cascade`, then use the system
+screenshot tool (Print Screen) and drop images in `docs/screenshots/`.
+
 ---
 
 ## Roadmap
 
-`Phase 1 MVP` ✅ (this repo) → `Phase 2 rclone advanced` (remote browser, local RC
-daemon, mounts, profiles) → `Phase 3 Backup Assistant` → `Phase 4 rsync advanced`
-(SSH, include/exclude) → `Phase 5 polish` (CI, `.deb`/AppImage, screenshots).
+- **Phase 1 — MVP** ✅ core pipeline, New Job, live progress, history, settings
+- **Phase 2 — rclone advanced** ✅ remote browser, mounts, profiles, local RC daemon
+- **Phase 3 — Backup Assistant** ✅ guided scenarios
+- **Phase 4 — rsync advanced** ✅ SSH transport, include/exclude, custom flags (via Advanced)
+- **Phase 5 — polish** 🚧 packaging done; CI green; screenshots + demo pending
+
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
 ## License
 
-GPL-3.0-or-later.
+GPL-3.0-or-later. See [LICENSE](LICENSE).

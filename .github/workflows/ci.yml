@@ -42,3 +42,17 @@ jobs:
         run: cargo clippy -p cascade-gui --all-targets -- -D warnings
       - name: build (gui)
         run: cargo build -p cascade-gui --release
+
+  packaging:
+    name: packaging (desktop + appstream)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils appstream
+      - name: Validate desktop entry
+        run: desktop-file-validate packaging/io.github.alexmihai.Cascade.desktop
+      - name: Validate AppStream metainfo
+        run: appstreamcli validate --no-net packaging/io.github.alexmihai.Cascade.metainfo.xml

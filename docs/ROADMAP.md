@@ -2,7 +2,7 @@
 
 ## F. Phased plan
 
-### Phase 1 — MVP  ◀ this skeleton targets Phase 1
+### Phase 1 — MVP ✅
 - [x] Cargo workspace, GTK-free core, clean module structure
 - [x] rclone/rsync detection
 - [x] copy/sync command builders (argv, never shell) + tests
@@ -11,27 +11,28 @@
 - [x] job state machine + tests
 - [x] SQLite init + schema + migrations
 - [x] command preview + dry-run (runnable example)
-- [ ] GTK New Job screen wired to the runner (window shell provided; wiring next)
+- [x] GTK New Job screen wired to the runner, with History
 
-### Phase 2 — rclone advanced
-- Remote browser (ls/lsd/lsjson), local browser
-- `rclone rcd` local daemon + RC HTTP client (loopback, random auth)
-- mount / unmount management screen
-- Profiles (save/load); `--transfers/--checkers/--retries/--bwlimit`
+### Phase 2 — rclone advanced ✅
+- [x] Remote browser (lsjson) with no-typing path picking
+- [x] `rclone rcd` local daemon (loopback, random credentials), queried via `rclone rc`
+- [x] mount / unmount management screen
+- [x] Profiles (save/load); `--transfers/--checkers/--retries/--bwlimit` (Advanced)
 
-### Phase 3 — Backup Assistant
-- Seeded scenario templates, Simple Mode flow
-- Auto dry-run recommendation, anti-disaster validations
+### Phase 3 — Backup Assistant ✅
+- [x] Seeded scenario templates feeding the New Job flow
+- [x] Auto dry-run recommendation, anti-disaster validations (risk + confirmation)
 
-### Phase 4 — rsync advanced
-- SSH transport, include/exclude pattern editor
-- Better `--info=progress2` parsing, rsync profiles
+### Phase 4 — rsync advanced ✅
+- [x] SSH transport (port option), include/exclude patterns
+- [x] `--info=progress2` parsing, rsync via profiles + advanced flags
 
-### Phase 5 — polish / portfolio
-- Final UI, screenshots, demo script
-- Full test suite, GitHub Actions CI (fmt/clippy/test/build)
-- Packaging: `.deb` + AppImage, desktop file, dependency checker
-- README with screenshots, threat model, demo video script
+### Phase 5 — polish / portfolio 🚧
+- [x] GitHub Actions CI (fmt/clippy/test/build + desktop/appstream validation)
+- [x] Packaging: `.deb` (cargo-deb), desktop file, AppStream metainfo, icon, user install script
+- [x] README with feature list and threat model
+- [ ] Screenshots + demo video script
+- [ ] AppImage build recipe wired into CI
 
 ---
 
