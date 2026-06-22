@@ -27,8 +27,10 @@ pub fn is_remote_endpoint(s: &str) -> bool {
 
 /// Validate a local path intended as a source or destination.
 ///
-/// Rejects empty/whitespace paths, the filesystem root `/`, and a bare `$HOME`.
-/// Warns (but allows) well-known system directories.
+/// Rejects empty/whitespace paths, paths containing `..`, the filesystem root
+/// `/`, and a bare `$HOME`. Warns (but allows) well-known system directories.
+/// If the path exists, it is canonicalized first so that **symlinks pointing at
+/// `/` or `$HOME` cannot slip past the guard**.
 pub fn validate(raw: &str) -> Result<PathVerdict> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -36,15 +38,30 @@ pub fn validate(raw: &str) -> Result<PathVerdict> {
     }
 
     // Normalize a trailing slash away (except for the bare root) for comparison.
-    let normalized = {
-        let stripped = trimmed.trim_end_matches('/');
-        if stripped.is_empty() {
-            "/"
-        } else {
-            stripped
-        }
-    };
+    let stripped = trimmed.trim_end_matches('/');
+    let normalized = if stripped.is_empty() { "/" } else { stripped };
 
+    // `..` could resolve to a forbidden location; require explicit paths.
+    if normalized.split('/').any(|c| c == "..") {
+        return Err(CoreError::DangerousPath(
+            "path must not contain '..'; use an explicit path".into(),
+        ));
+    }
+
+    // Check the literal path, then (if it exists) its symlink-resolved form.
+    let verdict = classify_dangerous(normalized)?;
+    if let Ok(canon) = std::fs::canonicalize(normalized) {
+        let canon = canon.to_string_lossy();
+        let canon_verdict = classify_dangerous(&canon)?; // may reject root/home
+        if matches!(canon_verdict, PathVerdict::Warn(_)) {
+            return Ok(canon_verdict);
+        }
+    }
+    Ok(verdict)
+}
+
+/// The dangerous-location checks, applied to an already-normalized path.
+fn classify_dangerous(normalized: &str) -> Result<PathVerdict> {
     if normalized == "/" {
         return Err(CoreError::DangerousPath(
             "the filesystem root '/' cannot be a source or destination".into(),
@@ -115,6 +132,31 @@ mod tests {
     fn normal_path_is_ok() {
         assert_eq!(validate("/home/tester/projects").unwrap(), PathVerdict::Ok);
         assert_eq!(validate("/mnt/backup/").unwrap(), PathVerdict::Ok);
+    }
+
+    #[test]
+    fn rejects_dotdot_components() {
+        assert!(matches!(
+            validate("/home/u/../.."),
+            Err(CoreError::DangerousPath(_))
+        ));
+        assert!(matches!(
+            validate("/srv/data/../../.."),
+            Err(CoreError::DangerousPath(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_root_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("root_link");
+        std::os::unix::fs::symlink("/", &link).unwrap();
+        // The literal path looks innocent, but it resolves to "/".
+        assert!(matches!(
+            validate(link.to_str().unwrap()),
+            Err(CoreError::DangerousPath(_))
+        ));
     }
 
     #[test]
