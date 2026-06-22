@@ -11,6 +11,7 @@ use cascade_core::job::JobSpec;
 
 use crate::ctx::AppCtx;
 use crate::views::mounts::MountsView;
+use crate::views::queue::QueueView;
 use crate::views::remote_browser::{PickTarget, RemoteBrowserView};
 use crate::views::{
     assistant, dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings,
@@ -45,7 +46,23 @@ impl MainWindow {
             })
         };
 
-        let new_job = Rc::new(new_job::build(ctx.clone(), window.clone(), on_changed));
+        // Jobs queue: runs up to max_parallel jobs; refreshes History on change.
+        let queue = QueueView::new(ctx.clone(), on_changed.clone());
+        let on_enqueue: Rc<dyn Fn(JobSpec)> = {
+            let queue = queue.clone();
+            let stack = stack.clone();
+            Rc::new(move |spec| {
+                queue.enqueue(spec);
+                stack.set_visible_child_name("queue");
+            })
+        };
+
+        let new_job = Rc::new(new_job::build(
+            ctx.clone(),
+            window.clone(),
+            on_changed,
+            on_enqueue,
+        ));
 
         // Loading a profile fills the New Job form and switches to it.
         let on_load: Rc<dyn Fn(JobSpec)> = {
@@ -108,6 +125,7 @@ impl MainWindow {
             "Mounts",
             "drive-harddisk-symbolic",
         );
+        stack.add_titled_with_icon(queue.widget(), Some("queue"), "Queue", "view-list-symbolic");
         stack.add_titled_with_icon(
             profiles.widget(),
             Some("profiles"),

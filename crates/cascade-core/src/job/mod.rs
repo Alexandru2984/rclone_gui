@@ -1,8 +1,10 @@
 //! Job model: a configured operation plus the live status of its current run.
 
+pub mod queue;
 pub mod spec;
 pub mod state;
 
+pub use queue::Queue;
 pub use spec::{AdvancedOptions, JobSpec, OpKind};
 pub use state::JobStatus;
 

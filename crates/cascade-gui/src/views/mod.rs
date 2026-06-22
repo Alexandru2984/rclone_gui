@@ -9,5 +9,6 @@ pub mod job_details;
 pub mod mounts;
 pub mod new_job;
 pub mod profiles;
+pub mod queue;
 pub mod remote_browser;
 pub mod settings;

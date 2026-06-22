@@ -101,6 +101,7 @@ pub fn build(
     ctx: Rc<AppCtx>,
     window: adw::ApplicationWindow,
     on_changed: Rc<dyn Fn()>,
+    on_enqueue: Rc<dyn Fn(JobSpec)>,
 ) -> NewJobView {
     // Prefill with throwaway temp dirs so the screen is immediately runnable.
     let src = std::env::temp_dir().join("cascade_demo_src");
@@ -236,6 +237,10 @@ pub fn build(
         .label("Save profile")
         .css_classes(vec!["pill".to_string()])
         .build();
+    let queue_btn = gtk::Button::builder()
+        .label("Add to queue")
+        .css_classes(vec!["pill".to_string()])
+        .build();
     let cancel_btn = gtk::Button::builder()
         .label("Cancel")
         .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
@@ -254,6 +259,7 @@ pub fn build(
         .spacing(8)
         .build();
     btn_box.append(&save_btn);
+    btn_box.append(&queue_btn);
     btn_box.append(&cancel_btn);
     btn_box.append(&dry_btn);
     btn_box.append(&run_btn);
@@ -309,6 +315,19 @@ pub fn build(
 
     inputs.wire();
     inputs.refresh_preview();
+
+    // "Add to queue" reads the current form and hands the spec to the queue.
+    {
+        let inputs = inputs.clone();
+        queue_btn.connect_clicked(move |_| match inputs.read_spec() {
+            Ok(spec) => {
+                on_enqueue(spec);
+                inputs.log_line("✓ added to queue");
+            }
+            Err(e) => inputs.log_line(&format!("✗ {e}")),
+        });
+    }
+
     NewJobView {
         root: outer.upcast(),
         inputs,
