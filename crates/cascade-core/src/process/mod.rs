@@ -218,7 +218,7 @@ async fn drive(
                 let status = child.wait().await.map_err(|e| e.to_string());
                 // Mark as an explicit cancellation regardless of the wait result.
                 let _ = ev.send(ProcessEvent::Error("cancelled by user".into())).await;
-                return status.map(|_| std::process::ExitStatus::default_failed());
+                status.map(|_| std::process::ExitStatus::default_failed())
             }
         }
     };

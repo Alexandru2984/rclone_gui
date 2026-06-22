@@ -30,14 +30,17 @@ impl JobStatus {
     /// Whether `self -> next` is a legal transition.
     pub fn can_transition_to(self, next: JobStatus) -> bool {
         use JobStatus::*;
-        match (self, next) {
-            (Pending, Running) | (Pending, Cancelled) => true,
-            (Running, Paused) | (Running, Completed) | (Running, Failed) | (Running, Cancelled) => {
-                true
-            }
-            (Paused, Running) | (Paused, Cancelled) => true,
-            _ => false,
-        }
+        matches!(
+            (self, next),
+            (Pending, Running)
+                | (Pending, Cancelled)
+                | (Running, Paused)
+                | (Running, Completed)
+                | (Running, Failed)
+                | (Running, Cancelled)
+                | (Paused, Running)
+                | (Paused, Cancelled)
+        )
     }
 
     /// Apply a transition, or return an error describing the illegal move.

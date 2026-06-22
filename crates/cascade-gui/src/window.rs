@@ -20,7 +20,7 @@ use crate::views::{
 pub struct MainWindow;
 
 impl MainWindow {
-    pub fn new(app: &adw::Application, ctx: Rc<AppCtx>) -> adw::ApplicationWindow {
+    pub fn build(app: &adw::Application, ctx: Rc<AppCtx>) -> adw::ApplicationWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Cascade")

@@ -8,18 +8,13 @@ use crate::storage::Store;
 const KEY: &str = "app_settings";
 
 /// Color scheme preference (maps to libadwaita's color scheme in the GUI).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
+    #[default]
     System,
     Light,
     Dark,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::System
-    }
 }
 
 /// User-configurable application settings.

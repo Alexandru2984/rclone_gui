@@ -21,7 +21,7 @@ pub fn run() -> glib::ExitCode {
 
     app.connect_activate(move |app| {
         apply_theme(ctx.settings.borrow().theme);
-        let window = MainWindow::new(app, ctx.clone());
+        let window = MainWindow::build(app, ctx.clone());
         window.present();
     });
 

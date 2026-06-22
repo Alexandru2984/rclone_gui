@@ -23,9 +23,8 @@ pub fn parse(input: &str) -> Result<Vec<String>> {
     let mut cur = String::new();
     let mut in_token = false;
     let mut quote: Option<char> = None;
-    let mut chars = input.chars().peekable();
 
-    while let Some(c) = chars.next() {
+    for c in input.chars() {
         match quote {
             Some(q) => {
                 if c == q {
