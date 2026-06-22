@@ -241,6 +241,10 @@ pub fn build(
         .label("Add to queue")
         .css_classes(vec!["pill".to_string()])
         .build();
+    let schedule_btn = gtk::Button::builder()
+        .label("Schedule…")
+        .css_classes(vec!["pill".to_string()])
+        .build();
     let cancel_btn = gtk::Button::builder()
         .label("Cancel")
         .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
@@ -260,6 +264,7 @@ pub fn build(
         .build();
     btn_box.append(&save_btn);
     btn_box.append(&queue_btn);
+    btn_box.append(&schedule_btn);
     btn_box.append(&cancel_btn);
     btn_box.append(&dry_btn);
     btn_box.append(&run_btn);
@@ -324,6 +329,15 @@ pub fn build(
                 on_enqueue(spec);
                 inputs.log_line("✓ added to queue");
             }
+            Err(e) => inputs.log_line(&format!("✗ {e}")),
+        });
+    }
+
+    // "Schedule…" exports the current job as a systemd user timer.
+    {
+        let inputs = inputs.clone();
+        schedule_btn.connect_clicked(move |_| match inputs.read_spec() {
+            Ok(spec) => crate::views::schedule::present(&inputs.window, spec),
             Err(e) => inputs.log_line(&format!("✗ {e}")),
         });
     }

@@ -16,6 +16,7 @@ pub mod logs;
 pub mod process;
 pub mod rclone;
 pub mod rsync;
+pub mod schedule;
 pub mod security;
 pub mod settings;
 pub mod storage;

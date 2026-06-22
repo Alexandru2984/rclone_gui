@@ -41,6 +41,8 @@ Eight screens: **Dashboard · Backup Assistant · New Job · Remotes · Mounts �
   mirror, restore…) that preconfigure a job and hand it to New Job.
 - **Remotes**: browse rclone remotes and pick paths without typing (async `lsjson`).
 - **Mounts**: mount a remote onto a local folder and manage active mounts (clean unmount).
+- **Scheduling**: export any job as a **systemd user timer** (`Schedule…`) — no
+  always-on daemon; systemd runs it and `journalctl --user` logs it.
 - **Profiles / History**: save & reload jobs; review past runs with status and timing.
 - **Settings**: light/dark/system theme, destructive-confirmation toggle, parallelism.
 - **Safety**: path guards, destructive-op confirmation, **secret-sanitized** live + on-disk
