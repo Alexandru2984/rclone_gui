@@ -69,6 +69,20 @@ pub fn spawn_with_parser(
     args: Vec<String>,
     parser: Option<LineParser>,
 ) -> RunHandle {
+    spawn_env(binary, args, Vec::new(), parser)
+}
+
+/// Like [`spawn_with_parser`], but also sets environment variables on the child.
+///
+/// Environment is preferred over argv for secrets (e.g. `RCLONE_RC_PASS`),
+/// because `/proc/<pid>/environ` is readable only by the owner whereas
+/// `/proc/<pid>/cmdline` is world-readable.
+pub fn spawn_env(
+    binary: impl Into<String>,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+    parser: Option<LineParser>,
+) -> RunHandle {
     let binary = binary.into();
     let (ev_tx, ev_rx) = async_channel::unbounded::<ProcessEvent>();
     let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
@@ -84,7 +98,7 @@ pub fn spawn_with_parser(
                 return;
             }
         };
-        rt.block_on(drive(binary, args, ev_tx, cancel_rx, parser));
+        rt.block_on(drive(binary, args, envs, ev_tx, cancel_rx, parser));
     });
 
     RunHandle {
@@ -100,11 +114,22 @@ pub fn capture(
     binary: impl Into<String>,
     args: Vec<String>,
 ) -> async_channel::Receiver<std::result::Result<String, String>> {
+    capture_env(binary, args, Vec::new())
+}
+
+/// Like [`capture`], but also sets environment variables on the child (used to
+/// pass RC credentials out of band rather than on the command line).
+pub fn capture_env(
+    binary: impl Into<String>,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+) -> async_channel::Receiver<std::result::Result<String, String>> {
     let binary = binary.into();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         let result = std::process::Command::new(&binary)
             .args(&args)
+            .envs(envs)
             .stdin(Stdio::null())
             .output();
         let msg = match result {
@@ -131,12 +156,14 @@ pub fn capture(
 async fn drive(
     binary: String,
     args: Vec<String>,
+    envs: Vec<(String, String)>,
     ev: async_channel::Sender<ProcessEvent>,
     cancel_rx: async_channel::Receiver<()>,
     parser: Option<LineParser>,
 ) {
     let mut child = match Command::new(&binary)
         .args(&args)
+        .envs(envs)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

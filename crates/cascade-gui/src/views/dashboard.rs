@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 
-use cascade_core::process::capture;
+use cascade_core::process::capture_env;
 use cascade_core::rclone::rcd::{parse_version, Rcd};
 
 pub fn build() -> gtk::Widget {
@@ -63,6 +63,7 @@ pub fn build() -> gtk::Widget {
                 Ok(rcd) => {
                     let addr = rcd.addr().to_string();
                     let args = rcd.rc_args("core/version");
+                    let env = rcd.rc_env();
                     status.set_label(&format!("Starting on {addr} …"));
                     btn.set_label("Stop");
                     *st = Some(rcd);
@@ -71,7 +72,7 @@ pub fn build() -> gtk::Widget {
                     // Give the daemon a moment to bind, then confirm via RC.
                     let status = status.clone();
                     glib::timeout_add_local_once(Duration::from_millis(800), move || {
-                        let rx = capture("rclone", args);
+                        let rx = capture_env("rclone", args, env);
                         glib::spawn_future_local(async move {
                             match rx.recv().await {
                                 Ok(Ok(out)) => {

@@ -8,7 +8,7 @@
 
 use std::io::Read;
 
-use crate::process::{spawn, RunHandle};
+use crate::process::{spawn_env, RunHandle};
 
 /// A running local RC daemon. Dropping or calling [`Rcd::stop`] kills it.
 pub struct Rcd {
@@ -20,18 +20,21 @@ pub struct Rcd {
 
 impl Rcd {
     /// Start `rclone rcd` on a free loopback port with random credentials.
+    ///
+    /// Credentials are passed via the environment (`RCLONE_RC_USER`/`_PASS`),
+    /// never on the command line, so they are not exposed in the world-readable
+    /// `/proc/<pid>/cmdline`.
     pub fn start() -> std::io::Result<Self> {
         let port = free_loopback_port()?;
         let addr = format!("127.0.0.1:{port}");
         let user = format!("cascade-{}", random_hex(4));
         let pass = random_hex(24);
-        let args = vec![
-            "rcd".to_string(),
-            format!("--rc-addr={addr}"),
-            format!("--rc-user={user}"),
-            format!("--rc-pass={pass}"),
+        let args = vec!["rcd".to_string(), format!("--rc-addr={addr}")];
+        let envs = vec![
+            ("RCLONE_RC_USER".to_string(), user.clone()),
+            ("RCLONE_RC_PASS".to_string(), pass.clone()),
         ];
-        let handle = spawn("rclone", args);
+        let handle = spawn_env("rclone", args, envs, None);
         Ok(Self {
             addr,
             user,
@@ -45,15 +48,21 @@ impl Rcd {
         &self.addr
     }
 
-    /// argv for `rclone rc <command>` against this daemon. The command is a
-    /// single argv item such as `core/version` or `core/stats`.
+    /// argv for `rclone rc <command>` against this daemon (no credentials —
+    /// those go through [`Self::rc_env`]).
     pub fn rc_args(&self, command: &str) -> Vec<String> {
         vec![
             "rc".to_string(),
             format!("--rc-addr={}", self.addr),
-            format!("--rc-user={}", self.user),
-            format!("--rc-pass={}", self.pass),
             command.to_string(),
+        ]
+    }
+
+    /// Environment carrying the RC credentials, for use with `capture_env`.
+    pub fn rc_env(&self) -> Vec<(String, String)> {
+        vec![
+            ("RCLONE_RC_USER".to_string(), self.user.clone()),
+            ("RCLONE_RC_PASS".to_string(), self.pass.clone()),
         ]
     }
 
@@ -89,21 +98,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rc_args_target_loopback_and_command_last() {
-        // Construct without starting a daemon by faking the struct via start()
-        // is overkill; test rc_args formatting through a hand-made instance.
+    fn rc_args_have_no_credentials_and_env_carries_them() {
         let rcd = Rcd {
             addr: "127.0.0.1:5572".into(),
             user: "cascade-abcd".into(),
             pass: "deadbeef".into(),
-            handle: spawn("true", vec![]),
+            handle: spawn_env("true", vec![], Vec::new(), None),
         };
         let args = rcd.rc_args("core/version");
         assert_eq!(args[0], "rc");
         assert!(args.iter().any(|a| a == "--rc-addr=127.0.0.1:5572"));
-        assert!(args.iter().any(|a| a.starts_with("--rc-user=")));
-        assert!(args.iter().any(|a| a.starts_with("--rc-pass=")));
         assert_eq!(args.last().unwrap(), "core/version");
+        // Credentials must NOT appear in argv (they would be world-readable).
+        assert!(!args
+            .iter()
+            .any(|a| a.contains("deadbeef") || a.contains("cascade-abcd")));
+
+        // They are carried via the environment instead.
+        let env = rcd.rc_env();
+        assert!(env.contains(&("RCLONE_RC_USER".into(), "cascade-abcd".into())));
+        assert!(env.contains(&("RCLONE_RC_PASS".into(), "deadbeef".into())));
         rcd.stop();
     }
 
