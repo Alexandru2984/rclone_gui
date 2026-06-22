@@ -8,6 +8,7 @@ use adw::prelude::*;
 use cascade_core::storage::RunRecord;
 
 use crate::ctx::AppCtx;
+use crate::views::job_details;
 
 #[derive(Clone)]
 pub struct HistoryView {
@@ -15,10 +16,11 @@ pub struct HistoryView {
     list: gtk::ListBox,
     empty: gtk::Label,
     ctx: Rc<AppCtx>,
+    window: adw::ApplicationWindow,
 }
 
 impl HistoryView {
-    pub fn new(ctx: Rc<AppCtx>) -> Self {
+    pub fn new(ctx: Rc<AppCtx>, window: adw::ApplicationWindow) -> Self {
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .css_classes(vec!["boxed-list".to_string()])
@@ -53,6 +55,7 @@ impl HistoryView {
             list,
             empty,
             ctx,
+            window,
         }
     }
 
@@ -67,7 +70,14 @@ impl HistoryView {
         self.empty.set_visible(runs.is_empty());
         self.list.set_visible(!runs.is_empty());
         for run in runs {
-            self.list.append(&row_for(&run));
+            let row = row_for(&run);
+            row.set_activatable(true);
+            let ctx = self.ctx.clone();
+            let window = self.window.clone();
+            row.connect_activated(move |_| {
+                job_details::present(&window, &ctx, run.clone());
+            });
+            self.list.append(&row);
         }
     }
 }

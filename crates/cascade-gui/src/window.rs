@@ -31,7 +31,7 @@ impl MainWindow {
 
         // History + a slot for Profiles so `on_changed` can refresh both even
         // though Profiles is constructed slightly later.
-        let history = HistoryView::new(ctx.clone());
+        let history = HistoryView::new(ctx.clone(), window.clone());
         let profiles_slot: Rc<RefCell<Option<ProfilesView>>> = Rc::new(RefCell::new(None));
 
         let on_changed: Rc<dyn Fn()> = {

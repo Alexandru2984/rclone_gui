@@ -67,15 +67,16 @@ impl LogWriter {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Level {
+/// Severity of a single log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
     Error,
     Warning,
     Info,
 }
 
 /// Best-effort severity classification from common rsync/rclone phrasing.
-fn classify(line: &str) -> Level {
+pub fn classify(line: &str) -> Level {
     let l = line.to_ascii_lowercase();
     if l.contains("error") || l.contains("failed") || l.contains("[error]") {
         Level::Error

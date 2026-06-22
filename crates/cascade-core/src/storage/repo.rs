@@ -102,6 +102,19 @@ impl Store {
         Ok(())
     }
 
+    /// The on-disk log path recorded for a run, if any.
+    pub fn run_log_path(&self, run_id: i64) -> Result<Option<String>> {
+        let p = self
+            .conn
+            .query_row(
+                "SELECT log_path FROM run_logs WHERE run_id = ?1 ORDER BY id DESC LIMIT 1",
+                [run_id],
+                |r| r.get(0),
+            )
+            .ok();
+        Ok(p)
+    }
+
     /// Save (or update by name) a reusable profile from a [`JobSpec`].
     pub fn save_profile(&self, spec: &JobSpec) -> Result<i64> {
         let options_json = serde_json::to_string(spec)?;
@@ -292,6 +305,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+        assert_eq!(
+            store.run_log_path(run).unwrap().as_deref(),
+            Some("/tmp/run-1.log")
+        );
+        assert_eq!(store.run_log_path(9999).unwrap(), None);
     }
 
     #[test]

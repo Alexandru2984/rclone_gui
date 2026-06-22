@@ -4,6 +4,7 @@
 pub mod assistant;
 pub mod dashboard;
 pub mod history;
+pub mod job_details;
 pub mod mounts;
 pub mod new_job;
 pub mod profiles;
