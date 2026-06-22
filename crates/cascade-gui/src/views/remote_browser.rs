@@ -8,9 +8,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::gio;
 
 use cascade_core::process::capture;
-use cascade_core::rclone::browse;
+use cascade_core::rclone::{browse, config};
 
 use crate::ctx::AppCtx;
 use crate::views::add_remote;
@@ -55,7 +56,13 @@ impl RemoteBrowserView {
         let add_btn = gtk::Button::from_icon_name("list-add-symbolic");
         add_btn.add_css_class("flat");
         add_btn.set_tooltip_text(Some("Add a new remote"));
-        remote_group.set_header_suffix(Some(&add_btn));
+        let delete_btn = gtk::Button::from_icon_name("user-trash-symbolic");
+        delete_btn.add_css_class("flat");
+        delete_btn.set_tooltip_text(Some("Delete the selected remote"));
+        let header_buttons = gtk::Box::builder().spacing(6).build();
+        header_buttons.append(&add_btn);
+        header_buttons.append(&delete_btn);
+        remote_group.set_header_suffix(Some(&header_buttons));
 
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.set_tooltip_text(Some("Go up one folder"));
@@ -156,6 +163,10 @@ impl RemoteBrowserView {
         }
         {
             let this = view.clone();
+            delete_btn.connect_clicked(move |_| this.delete_current());
+        }
+        {
+            let this = view.clone();
             use_src.connect_clicked(move |_| this.pick(PickTarget::Source));
         }
         {
@@ -187,6 +198,48 @@ impl RemoteBrowserView {
         }
     }
 
+    fn delete_current(&self) {
+        let Some(remote) = self.current_remote() else {
+            self.status.set_label("Select a remote to delete.");
+            return;
+        };
+        let name = remote.trim_end_matches(':').to_string();
+
+        let dialog = adw::AlertDialog::new(
+            Some("Delete remote"),
+            Some(&format!(
+                "Remove the rclone remote “{name}” from your configuration?\n\nThis only removes the connection — it does not delete any files on the remote."
+            )),
+        );
+        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let this = self.clone();
+        dialog.choose(&self.window, gio::Cancellable::NONE, move |resp| {
+            if resp != "delete" {
+                return;
+            }
+            let args = match config::config_delete_args(&name) {
+                Ok(a) => a,
+                Err(e) => {
+                    this.status.set_label(&format!("{e}"));
+                    return;
+                }
+            };
+            let rx = capture("rclone", args);
+            let this = this.clone();
+            glib::spawn_future_local(async move {
+                match rx.recv().await {
+                    Ok(Ok(_)) => this.load_remotes(),
+                    Ok(Err(e)) => this.status.set_label(&format!("Delete failed: {e}")),
+                    Err(_) => {}
+                }
+            });
+        });
+    }
+
     fn load_remotes(&self) {
         self.status.set_visible(true);
         self.status.set_label("Loading remotes…");
@@ -197,9 +250,12 @@ impl RemoteBrowserView {
                 Ok(Ok(out)) => {
                     let remotes = browse::parse_remotes(&out);
                     if remotes.is_empty() {
-                        this.status.set_label(
-                            "No rclone remotes configured. Run `rclone config` in a terminal to add one.",
-                        );
+                        this.remotes.borrow_mut().clear();
+                        this.remote_combo.set_model(gtk::gio::ListModel::NONE);
+                        this.list.remove_all();
+                        this.path_label.set_label("");
+                        this.status
+                            .set_label("No rclone remotes configured. Use “+” to add one.");
                         return;
                     }
                     let names: Vec<&str> = remotes.iter().map(|s| s.as_str()).collect();
