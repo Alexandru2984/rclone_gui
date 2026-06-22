@@ -32,6 +32,10 @@ impl AppCtx {
                 Store::open_in_memory().expect("in-memory store")
             }
         };
+        // Clean up runs orphaned by a previous crash/hard exit.
+        if let Err(e) = store.fail_interrupted_runs() {
+            eprintln!("warning: could not clean up interrupted runs: {e}");
+        }
         let settings = AppSettings::load(&store);
         Rc::new(Self {
             store: Rc::new(store),

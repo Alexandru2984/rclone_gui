@@ -88,6 +88,18 @@ impl Store {
         Ok(())
     }
 
+    /// Mark any run still `running` as failed — called at startup to clean up
+    /// rows orphaned by a crash or hard exit. Returns how many were fixed.
+    pub fn fail_interrupted_runs(&self) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE job_runs
+             SET status = 'failed', error_summary = 'Interrupted by app exit', ended_at = ?1
+             WHERE status = 'running'",
+            [now()],
+        )?;
+        Ok(n)
+    }
+
     /// Record the on-disk log for a finished run.
     pub fn insert_run_log(
         &self,
@@ -280,6 +292,25 @@ mod tests {
 
         store.delete_profile(id1).unwrap();
         assert!(store.list_profiles().unwrap().is_empty());
+    }
+
+    #[test]
+    fn interrupted_runs_are_failed_on_cleanup() {
+        let store = Store::open_in_memory().unwrap();
+        let job = store
+            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .unwrap();
+        store.start_run(job, false, "cmd").unwrap(); // left as 'running'
+
+        let fixed = store.fail_interrupted_runs().unwrap();
+        assert_eq!(fixed, 1);
+
+        let runs = store.recent_runs(10).unwrap();
+        assert_eq!(runs[0].status, "failed");
+        assert!(runs[0].ended_at.is_some());
+
+        // Idempotent: nothing left to fix.
+        assert_eq!(store.fail_interrupted_runs().unwrap(), 0);
     }
 
     #[test]
