@@ -10,6 +10,7 @@ use adw::prelude::*;
 use cascade_core::job::JobSpec;
 
 use crate::ctx::AppCtx;
+use crate::i18n::tr;
 use crate::views::mounts::MountsView;
 use crate::views::queue::QueueView;
 use crate::views::remote_browser::{PickTarget, RemoteBrowserView};
@@ -98,50 +99,55 @@ impl MainWindow {
         stack.add_titled_with_icon(
             &dashboard::build(),
             Some("dashboard"),
-            "Dashboard",
+            &tr("Dashboard"),
             "go-home-symbolic",
         );
         stack.add_titled_with_icon(
             &assistant_widget,
             Some("assistant"),
-            "Assistant",
+            &tr("Assistant"),
             "starred-symbolic",
         );
         stack.add_titled_with_icon(
             new_job.widget(),
             Some("new-job"),
-            "New Job",
+            &tr("New Job"),
             "list-add-symbolic",
         );
         stack.add_titled_with_icon(
             remotes.widget(),
             Some("remotes"),
-            "Remotes",
+            &tr("Remotes"),
             "network-server-symbolic",
         );
         stack.add_titled_with_icon(
             mounts.widget(),
             Some("mounts"),
-            "Mounts",
+            &tr("Mounts"),
             "drive-harddisk-symbolic",
         );
-        stack.add_titled_with_icon(queue.widget(), Some("queue"), "Queue", "view-list-symbolic");
+        stack.add_titled_with_icon(
+            queue.widget(),
+            Some("queue"),
+            &tr("Queue"),
+            "view-list-symbolic",
+        );
         stack.add_titled_with_icon(
             profiles.widget(),
             Some("profiles"),
-            "Profiles",
+            &tr("Profiles"),
             "user-bookmarks-symbolic",
         );
         stack.add_titled_with_icon(
             history.widget(),
             Some("history"),
-            "History",
+            &tr("History"),
             "document-open-recent-symbolic",
         );
         stack.add_titled_with_icon(
             &settings::build(ctx.clone()),
             Some("settings"),
-            "Settings",
+            &tr("Settings"),
             "emblem-system-symbolic",
         );
 

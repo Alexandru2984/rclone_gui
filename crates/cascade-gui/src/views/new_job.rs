@@ -234,28 +234,28 @@ pub fn build(
     log_group.add(&scroller);
 
     let save_btn = gtk::Button::builder()
-        .label("Save profile")
+        .label(crate::i18n::tr("Save profile"))
         .css_classes(vec!["pill".to_string()])
         .build();
     let queue_btn = gtk::Button::builder()
-        .label("Add to queue")
+        .label(crate::i18n::tr("Add to queue"))
         .css_classes(vec!["pill".to_string()])
         .build();
     let schedule_btn = gtk::Button::builder()
-        .label("Schedule…")
+        .label(crate::i18n::tr("Schedule…"))
         .css_classes(vec!["pill".to_string()])
         .build();
     let cancel_btn = gtk::Button::builder()
-        .label("Cancel")
+        .label(crate::i18n::tr("Cancel"))
         .css_classes(vec!["pill".to_string(), "destructive-action".to_string()])
         .sensitive(false)
         .build();
     let dry_btn = gtk::Button::builder()
-        .label("Dry-run")
+        .label(crate::i18n::tr("Dry-run"))
         .css_classes(vec!["pill".to_string()])
         .build();
     let run_btn = gtk::Button::builder()
-        .label("Start")
+        .label(crate::i18n::tr("Start"))
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
     let btn_box = gtk::Box::builder()

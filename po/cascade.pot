@@ -1,0 +1,54 @@
+# Cascade — translation template.
+# Regenerate with po/extract.sh (needs xgettext). Copy to <lang>.po to translate.
+msgid ""
+msgstr ""
+"Project-Id-Version: cascade 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Dashboard"
+msgstr ""
+
+msgid "Assistant"
+msgstr ""
+
+msgid "New Job"
+msgstr ""
+
+msgid "Remotes"
+msgstr ""
+
+msgid "Mounts"
+msgstr ""
+
+msgid "Queue"
+msgstr ""
+
+msgid "Profiles"
+msgstr ""
+
+msgid "History"
+msgstr ""
+
+msgid "Settings"
+msgstr ""
+
+msgid "Start"
+msgstr ""
+
+msgid "Dry-run"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Save profile"
+msgstr ""
+
+msgid "Add to queue"
+msgstr ""
+
+msgid "Schedule…"
+msgstr ""

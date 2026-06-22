@@ -165,6 +165,24 @@ screenshot tool (Print Screen) and drop images in `docs/screenshots/`.
 
 ---
 
+## Translations (i18n)
+
+User-facing strings go through gettext (`i18n::tr`). Translations live in
+[`po/`](po/). With no catalog installed, the UI is English.
+
+```bash
+sudo apt install gettext          # provides msgfmt / xgettext
+po/extract.sh                     # regenerate po/cascade.pot from the source
+po/build-mo.sh                    # compile *.po -> po/locale/<lang>/LC_MESSAGES/cascade.mo
+# try the Romanian translation without installing:
+CASCADE_LOCALE_DIR="$PWD/po/locale" LANG=ro_RO.UTF-8 cargo run -p cascade-gui
+```
+
+Add a language by copying `po/cascade.pot` to `po/<lang>.po`, translating the
+`msgstr`s, and rebuilding. Romanian (`ro`) ships as an example.
+
+---
+
 ## Roadmap
 
 - **Phase 1 — MVP** ✅ core pipeline, New Job, live progress, history, settings

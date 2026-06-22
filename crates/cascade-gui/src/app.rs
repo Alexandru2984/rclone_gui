@@ -9,6 +9,7 @@ use crate::ctx::{apply_theme, AppCtx};
 use crate::window::MainWindow;
 
 pub fn run() -> glib::ExitCode {
+    crate::i18n::init();
     let ctx = AppCtx::new();
 
     // Set a human-readable application name. In GTK4 the window icon and the

@@ -1,0 +1,54 @@
+# Cascade — Romanian translation.
+msgid ""
+msgstr ""
+"Project-Id-Version: cascade 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"Language: ro\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Dashboard"
+msgstr "Tablou de bord"
+
+msgid "Assistant"
+msgstr "Asistent"
+
+msgid "New Job"
+msgstr "Job nou"
+
+msgid "Remotes"
+msgstr "Remote-uri"
+
+msgid "Mounts"
+msgstr "Montări"
+
+msgid "Queue"
+msgstr "Coadă"
+
+msgid "Profiles"
+msgstr "Profiluri"
+
+msgid "History"
+msgstr "Istoric"
+
+msgid "Settings"
+msgstr "Setări"
+
+msgid "Start"
+msgstr "Pornește"
+
+msgid "Dry-run"
+msgstr "Simulare"
+
+msgid "Cancel"
+msgstr "Anulează"
+
+msgid "Save profile"
+msgstr "Salvează profilul"
+
+msgid "Add to queue"
+msgstr "Adaugă în coadă"
+
+msgid "Schedule…"
+msgstr "Programează…"

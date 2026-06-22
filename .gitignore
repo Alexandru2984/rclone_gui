@@ -5,3 +5,6 @@ Cargo.lock.orig
 *.db-wal
 *.db-shm
 .DS_Store
+
+# generated translation catalogs
+po/locale/

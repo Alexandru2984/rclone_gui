@@ -6,6 +6,7 @@
 
 mod app;
 mod ctx;
+mod i18n;
 mod views;
 mod window;
 
