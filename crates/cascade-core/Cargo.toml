@@ -17,7 +17,7 @@ regex = "1"
 directories = "5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 shlex = "1"
-tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "sync", "macros", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
