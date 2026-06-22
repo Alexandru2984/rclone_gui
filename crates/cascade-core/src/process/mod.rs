@@ -15,8 +15,13 @@ pub mod progress;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+/// Hard cap on a single output line. Output without newlines (binary data, a
+/// maliciously long filename) is truncated at this length instead of being
+/// buffered without bound — protects against OOM (a denial of service).
+const MAX_LINE_BYTES: usize = 64 * 1024;
 
 use crate::job::Progress;
 use crate::security::sanitize;
@@ -192,23 +197,8 @@ async fn drive(
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
-    let ev_out = ev.clone();
-    let parser_out = parser.clone();
-    let read_stdout = async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            emit_line(&ev_out, &parser_out, sanitize::redact(&line), false).await;
-        }
-    };
-
-    let ev_err = ev.clone();
-    let parser_err = parser.clone();
-    let read_stderr = async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            emit_line(&ev_err, &parser_err, sanitize::redact(&line), true).await;
-        }
-    };
+    let read_stdout = stream_lines(stdout, ev.clone(), parser.clone(), false);
+    let read_stderr = stream_lines(stderr, ev.clone(), parser.clone(), true);
 
     let wait_or_cancel = async {
         tokio::select! {
@@ -245,6 +235,56 @@ async fn drive(
                 .await;
         }
     }
+}
+
+/// Read `reader` in fixed chunks, splitting on `\n`, capping each line at
+/// [`MAX_LINE_BYTES`] (excess is dropped and the line is marked truncated).
+/// Memory stays bounded regardless of the child's output.
+async fn stream_lines<R: AsyncReadExt + Unpin>(
+    mut reader: R,
+    ev: async_channel::Sender<ProcessEvent>,
+    parser: Option<LineParser>,
+    is_stderr: bool,
+) {
+    let mut chunk = [0u8; 8192];
+    let mut line: Vec<u8> = Vec::with_capacity(256);
+    let mut truncated = false;
+
+    loop {
+        let n = match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &b in &chunk[..n] {
+            if b == b'\n' {
+                flush_line(&ev, &parser, &mut line, &mut truncated, is_stderr).await;
+            } else if line.len() < MAX_LINE_BYTES {
+                line.push(b);
+            } else {
+                truncated = true; // drop bytes beyond the cap
+            }
+        }
+    }
+    if !line.is_empty() || truncated {
+        flush_line(&ev, &parser, &mut line, &mut truncated, is_stderr).await;
+    }
+}
+
+/// Sanitize, parse, and emit one accumulated line, then reset the buffer.
+async fn flush_line(
+    ev: &async_channel::Sender<ProcessEvent>,
+    parser: &Option<LineParser>,
+    line: &mut Vec<u8>,
+    truncated: &mut bool,
+    is_stderr: bool,
+) {
+    let mut text = String::from_utf8_lossy(line).into_owned();
+    if *truncated {
+        text.push_str(" …[truncated]");
+    }
+    line.clear();
+    *truncated = false;
+    emit_line(ev, parser, sanitize::redact(&text), is_stderr).await;
 }
 
 /// Emit one output line: a parsed [`ProcessEvent::Progress`] when the parser
@@ -295,6 +335,29 @@ impl ExitStatusExt for std::process::ExitStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn long_line_is_capped_not_unbounded() {
+        // 200 KB of NUL bytes with no newline — a naive reader would buffer it
+        // all; ours must cap each emitted line at MAX_LINE_BYTES.
+        let h = spawn(
+            "head",
+            vec!["-c".into(), "200000".into(), "/dev/zero".into()],
+        );
+        let mut longest = 0usize;
+        while let Ok(ev) = h.events.recv().await {
+            match ev {
+                ProcessEvent::Stdout(l) => longest = longest.max(l.len()),
+                ProcessEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(longest > 0, "expected some output");
+        assert!(
+            longest <= MAX_LINE_BYTES + 32,
+            "line not capped: {longest} bytes"
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_echo_and_streams_stdout() {
