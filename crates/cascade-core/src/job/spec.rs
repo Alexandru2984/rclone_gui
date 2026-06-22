@@ -96,8 +96,30 @@ impl JobSpec {
     }
 
     /// The risk level the UI uses to decide on confirmation + dry-run defaults.
+    ///
+    /// Custom flags are also inspected: a `Copy` job is normally only `Caution`,
+    /// but if the user added a deletion flag (e.g. `--delete`) or a remote-exec
+    /// flag (rsync `-e` / `--rsync-path`) via Advanced, it is escalated to
+    /// `Destructive` so the confirmation gate still applies.
     pub fn risk(&self) -> RiskLevel {
-        classify(self.op.as_operation(), self.delete_effective())
+        let base = classify(self.op.as_operation(), self.delete_effective());
+        if base == RiskLevel::Destructive || self.has_dangerous_flags() {
+            RiskLevel::Destructive
+        } else {
+            base
+        }
+    }
+
+    /// Whether the custom flags can delete data or run a remote command.
+    fn has_dangerous_flags(&self) -> bool {
+        self.options.extra_flags.iter().any(|f| {
+            f.starts_with("--delete")
+                || f == "--remove-source-files"
+                || f == "--rsync-path"
+                || f.starts_with("--rsync-path=")
+                || f == "-e"
+                || f.starts_with("--rsh")
+        })
     }
 
     /// The binary that will be invoked.
@@ -273,6 +295,30 @@ mod tests {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
         s.dry_run = true;
         assert!(s.build_argv().unwrap().contains(&"-n".to_string()));
+    }
+
+    #[test]
+    fn copy_with_delete_flag_escalates_to_destructive() {
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        assert_eq!(s.risk(), RiskLevel::Caution);
+        s.options.extra_flags = vec!["--delete".into()];
+        assert_eq!(s.risk(), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn remote_exec_flags_escalate_to_destructive() {
+        for flag in ["-e", "--rsync-path=/usr/bin/evil"] {
+            let mut s = spec(Tool::Rsync, OpKind::Copy);
+            s.options.extra_flags = vec![flag.into()];
+            assert_eq!(s.risk(), RiskLevel::Destructive, "{flag} should escalate");
+        }
+    }
+
+    #[test]
+    fn harmless_flags_do_not_escalate() {
+        let mut s = spec(Tool::Rclone, OpKind::Copy);
+        s.options.extra_flags = vec!["--fast-list".into(), "--transfers".into(), "8".into()];
+        assert_eq!(s.risk(), RiskLevel::Caution);
     }
 
     #[test]
