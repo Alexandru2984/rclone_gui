@@ -8,6 +8,7 @@
 //! Design rule: **no command is ever built as a shell string.** Every external
 //! tool is invoked with an explicit argument vector (`Vec<String>`).
 
+pub mod assistant;
 pub mod config;
 pub mod error;
 pub mod job;

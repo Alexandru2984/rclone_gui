@@ -12,7 +12,9 @@ use cascade_core::job::JobSpec;
 use crate::ctx::AppCtx;
 use crate::views::mounts::MountsView;
 use crate::views::remote_browser::{PickTarget, RemoteBrowserView};
-use crate::views::{dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings};
+use crate::views::{
+    assistant, dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings,
+};
 
 pub struct MainWindow;
 
@@ -54,6 +56,10 @@ impl MainWindow {
                 stack.set_visible_child_name("new-job");
             })
         };
+        // The Assistant produces a preconfigured spec and reuses the same
+        // "load into New Job and switch there" path as profiles.
+        let assistant_widget = assistant::build(window.clone(), on_load.clone());
+
         let profiles = ProfilesView::new(ctx.clone(), on_load);
         *profiles_slot.borrow_mut() = Some(profiles.clone());
 
@@ -79,6 +85,12 @@ impl MainWindow {
             "go-home-symbolic",
         );
         stack.add_titled_with_icon(
+            &assistant_widget,
+            Some("assistant"),
+            "Assistant",
+            "starred-symbolic",
+        );
+        stack.add_titled_with_icon(
             new_job.widget(),
             Some("new-job"),
             "New Job",
@@ -100,7 +112,7 @@ impl MainWindow {
             profiles.widget(),
             Some("profiles"),
             "Profiles",
-            "starred-symbolic",
+            "user-bookmarks-symbolic",
         );
         stack.add_titled_with_icon(
             history.widget(),
