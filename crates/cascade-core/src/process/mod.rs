@@ -5,23 +5,37 @@
 //! output line is passed through [`crate::security::sanitize`] *inside* the
 //! runner, so a secret can never leave this module un-redacted.
 //!
-//! The child runs on a dedicated OS thread driving a current-thread Tokio
-//! runtime. This keeps the GUI free of any Tokio dependency: it just consumes
-//! the receiver from its GLib main loop via `glib::spawn_future_local`, because
-//! `async-channel` is executor-agnostic.
+//! Children are driven on a shared, lazily-created multi-threaded Tokio runtime
+//! (one per process, not one per command). This keeps the GUI free of any Tokio
+//! dependency: it just consumes the receiver from its GLib main loop via
+//! `glib::spawn_future_local`, because `async-channel` is executor-agnostic.
 
 pub mod progress;
 
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::runtime::Runtime;
 
 /// Hard cap on a single output line. Output without newlines (binary data, a
 /// maliciously long filename) is truncated at this length instead of being
 /// buffered without bound — protects against OOM (a denial of service).
 const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// Shared multi-threaded Tokio runtime that drives every child process, created
+/// lazily on first use. One runtime for the whole app instead of spinning up a
+/// fresh thread + runtime per command.
+fn runtime() -> &'static Runtime {
+    static RT: OnceLock<Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build the Tokio runtime")
+    })
+}
 
 use crate::job::Progress;
 use crate::security::sanitize;
@@ -92,19 +106,7 @@ pub fn spawn_env(
     let (ev_tx, ev_rx) = async_channel::unbounded::<ProcessEvent>();
     let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
 
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                let _ = ev_tx.send_blocking(ProcessEvent::Error(format!("runtime: {e}")));
-                return;
-            }
-        };
-        rt.block_on(drive(binary, args, envs, ev_tx, cancel_rx, parser));
-    });
+    runtime().spawn(drive(binary, args, envs, ev_tx, cancel_rx, parser));
 
     RunHandle {
         events: ev_rx,
@@ -131,12 +133,13 @@ pub fn capture_env(
 ) -> async_channel::Receiver<std::result::Result<String, String>> {
     let binary = binary.into();
     let (tx, rx) = async_channel::bounded(1);
-    std::thread::spawn(move || {
-        let result = std::process::Command::new(&binary)
+    runtime().spawn(async move {
+        let result = Command::new(&binary)
             .args(&args)
             .envs(envs)
             .stdin(Stdio::null())
-            .output();
+            .output()
+            .await;
         let msg = match result {
             Ok(out) if out.status.success() => {
                 Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -153,7 +156,7 @@ pub fn capture_env(
             )),
             Err(e) => Err(format!("failed to run '{binary}': {e}")),
         };
-        let _ = tx.send_blocking(msg);
+        let _ = tx.send(msg).await;
     });
     rx
 }
