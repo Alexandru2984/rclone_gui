@@ -19,6 +19,9 @@ use crate::ctx::AppCtx;
 struct Item {
     spec: JobSpec,
     row: adw::ActionRow,
+    up: gtk::Button,
+    down: gtk::Button,
+    remove: gtk::Button,
     cancel: gtk::Button,
     handle: Option<RunHandle>,
     done: bool,
@@ -33,6 +36,7 @@ pub struct QueueView {
     queue: Rc<RefCell<Queue<u64>>>,
     items: Rc<RefCell<HashMap<u64, Item>>>,
     next_id: Rc<Cell<u64>>,
+    paused: Rc<Cell<bool>>,
     on_changed: Rc<dyn Fn()>,
 }
 
@@ -50,14 +54,20 @@ impl QueueView {
             .margin_top(24)
             .build();
 
-        let clear = gtk::Button::builder()
-            .label("Clear finished")
-            .halign(gtk::Align::End)
+        let pause = gtk::Button::builder()
+            .label("Pause")
             .css_classes(vec!["pill".to_string()])
             .build();
+        let clear = gtk::Button::builder()
+            .label("Clear finished")
+            .css_classes(vec!["pill".to_string()])
+            .build();
+        let header_buttons = gtk::Box::builder().spacing(6).build();
+        header_buttons.append(&pause);
+        header_buttons.append(&clear);
 
         let group = adw::PreferencesGroup::builder().title("Jobs").build();
-        group.set_header_suffix(Some(&clear));
+        group.set_header_suffix(Some(&header_buttons));
         group.add(&empty);
         group.add(&list);
 
@@ -86,12 +96,24 @@ impl QueueView {
             queue: Rc::new(RefCell::new(Queue::new(max))),
             items: Rc::new(RefCell::new(HashMap::new())),
             next_id: Rc::new(Cell::new(1)),
+            paused: Rc::new(Cell::new(false)),
             on_changed,
         };
 
         {
             let this = view.clone();
             clear.connect_clicked(move |_| this.clear_finished());
+        }
+        {
+            let this = view.clone();
+            pause.connect_clicked(move |btn| {
+                let now_paused = !this.paused.get();
+                this.paused.set(now_paused);
+                btn.set_label(if now_paused { "Resume" } else { "Pause" });
+                if !now_paused {
+                    this.pump();
+                }
+            });
         }
         view.refresh_empty();
         view
@@ -110,18 +132,40 @@ impl QueueView {
             .title(&spec.name)
             .subtitle("queued")
             .build();
-        let cancel = gtk::Button::builder()
-            .icon_name("process-stop-symbolic")
-            .valign(gtk::Align::Center)
-            .css_classes(vec!["flat".to_string()])
-            .tooltip_text("Cancel")
-            .sensitive(false)
-            .build();
+
+        let mk = |icon: &str, tip: &str| {
+            gtk::Button::builder()
+                .icon_name(icon)
+                .valign(gtk::Align::Center)
+                .css_classes(vec!["flat".to_string()])
+                .tooltip_text(tip)
+                .build()
+        };
+        let up = mk("go-up-symbolic", "Move up");
+        let down = mk("go-down-symbolic", "Move down");
+        let remove = mk("list-remove-symbolic", "Remove from queue");
+        let cancel = mk("process-stop-symbolic", "Cancel");
+        cancel.set_visible(false); // shown only while running
+
+        for b in [&up, &down, &remove, &cancel] {
+            row.add_suffix(b);
+        }
+        {
+            let this = self.clone();
+            up.connect_clicked(move |_| this.move_item(id, -1));
+        }
+        {
+            let this = self.clone();
+            down.connect_clicked(move |_| this.move_item(id, 1));
+        }
+        {
+            let this = self.clone();
+            remove.connect_clicked(move |_| this.remove_item(id));
+        }
         {
             let this = self.clone();
             cancel.connect_clicked(move |_| this.cancel_item(id));
         }
-        row.add_suffix(&cancel);
         self.list.append(&row);
 
         self.items.borrow_mut().insert(
@@ -129,6 +173,9 @@ impl QueueView {
             Item {
                 spec,
                 row,
+                up,
+                down,
+                remove,
                 cancel,
                 handle: None,
                 done: false,
@@ -140,11 +187,44 @@ impl QueueView {
     }
 
     fn pump(&self) {
+        if self.paused.get() {
+            return;
+        }
         let max = self.ctx.settings.borrow().max_parallel.max(1) as usize;
         self.queue.borrow_mut().set_max(max);
         let ready = self.queue.borrow_mut().start_ready();
         for id in ready {
             self.launch(id);
+        }
+    }
+
+    /// Remove a still-queued job (no effect once running).
+    fn remove_item(&self, id: u64) {
+        if self.queue.borrow_mut().remove(&id) {
+            if let Some(it) = self.items.borrow_mut().remove(&id) {
+                self.list.remove(&it.row);
+            }
+            self.refresh_empty();
+        }
+    }
+
+    /// Reorder a still-queued job by one position (`dir` = -1 up, +1 down).
+    fn move_item(&self, id: u64, dir: i32) {
+        let moved = if dir < 0 {
+            self.queue.borrow_mut().move_up(&id)
+        } else {
+            self.queue.borrow_mut().move_down(&id)
+        };
+        if !moved {
+            return;
+        }
+        if let Some(it) = self.items.borrow().get(&id) {
+            let idx = it.row.index();
+            let target = idx + dir;
+            if target >= 0 {
+                self.list.remove(&it.row);
+                self.list.insert(&it.row, target);
+            }
         }
     }
 
@@ -191,6 +271,13 @@ impl QueueView {
             .unwrap_or(-1);
 
         row.set_subtitle("running…");
+        // Switch the row controls from queued (reorder/remove) to running (cancel).
+        if let Some(it) = self.items.borrow().get(&id) {
+            it.up.set_visible(false);
+            it.down.set_visible(false);
+            it.remove.set_visible(false);
+            it.cancel.set_visible(true);
+        }
         cancel.set_sensitive(true);
 
         let parser: LineParser = match spec.tool {
@@ -248,7 +335,7 @@ impl QueueView {
                 );
             }
             row.set_subtitle(status);
-            cancel.set_sensitive(false);
+            cancel.set_visible(false);
             this.mark_done(id);
             this.queue.borrow_mut().complete();
             this.pump();

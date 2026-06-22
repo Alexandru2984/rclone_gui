@@ -63,6 +63,40 @@ impl<T> Queue<T> {
     }
 }
 
+impl<T: PartialEq> Queue<T> {
+    /// Remove a still-pending item. Returns `true` if it was found.
+    pub fn remove(&mut self, item: &T) -> bool {
+        if let Some(pos) = self.pending.iter().position(|x| x == item) {
+            self.pending.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move a pending item one position earlier (starts sooner).
+    pub fn move_up(&mut self, item: &T) -> bool {
+        match self.pending.iter().position(|x| x == item) {
+            Some(pos) if pos > 0 => {
+                self.pending.swap(pos, pos - 1);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Move a pending item one position later (starts later).
+    pub fn move_down(&mut self, item: &T) -> bool {
+        match self.pending.iter().position(|x| x == item) {
+            Some(pos) if pos + 1 < self.pending.len() => {
+                self.pending.swap(pos, pos + 1);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +147,34 @@ mod tests {
         q.set_max(3);
         assert_eq!(q.start_ready().len(), 2); // now 3 running total
         assert_eq!(q.running(), 3);
+    }
+
+    #[test]
+    fn remove_and_reorder_pending() {
+        let mut q: Queue<i32> = Queue::new(1);
+        for i in [10, 20, 30] {
+            q.enqueue(i);
+        }
+        // Reorder: move 30 up once → [10, 30, 20].
+        assert!(q.move_up(&30));
+        // Remove 10.
+        assert!(q.remove(&10));
+        assert!(!q.remove(&999));
+        // Start order now reflects [30, 20].
+        let mut order = Vec::new();
+        order.extend(q.start_ready());
+        q.complete();
+        order.extend(q.start_ready());
+        assert_eq!(order, vec![30, 20]);
+    }
+
+    #[test]
+    fn move_bounds_are_safe() {
+        let mut q: Queue<i32> = Queue::new(1);
+        q.enqueue(1);
+        q.enqueue(2);
+        assert!(!q.move_up(&1)); // already first
+        assert!(!q.move_down(&2)); // already last
     }
 
     #[test]
