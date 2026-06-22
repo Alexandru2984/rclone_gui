@@ -5,7 +5,7 @@
 //! destination and hands the resulting spec to the New Job screen, where the
 //! usual dry-run / destructive-confirmation gates apply.
 
-use crate::job::{JobSpec, OpKind};
+use crate::job::{AdvancedOptions, JobSpec, OpKind};
 use crate::security::destructive::RiskLevel;
 use crate::Tool;
 
@@ -24,6 +24,8 @@ pub struct Scenario {
     pub recommend_dry_run: bool,
     pub source_hint: &'static str,
     pub dest_hint: &'static str,
+    /// Default exclude patterns applied to the generated spec.
+    pub excludes: &'static [&'static str],
 }
 
 impl Scenario {
@@ -37,6 +39,10 @@ impl Scenario {
             destination: destination.to_string(),
             dry_run: false,
             delete: self.delete,
+            options: AdvancedOptions {
+                excludes: self.excludes.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            },
         }
     }
 
@@ -63,6 +69,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: false,
             source_hint: "~/Pictures",
             dest_hint: "/mnt/backup/Photos",
+            excludes: &[],
         },
         Scenario {
             id: "backup_projects",
@@ -75,6 +82,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: false,
             source_hint: "~/Projects",
             dest_hint: "/mnt/backup/Projects",
+            excludes: &["node_modules", "target", ".venv", "__pycache__"],
         },
         Scenario {
             id: "backup_personal",
@@ -87,6 +95,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: false,
             source_hint: "~/Documents",
             dest_hint: "/mnt/backup/Documents",
+            excludes: &[],
         },
         Scenario {
             id: "backup_to_gdrive",
@@ -99,6 +108,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: false,
             source_hint: "~/Documents",
             dest_hint: "gdrive:Backup",
+            excludes: &[],
         },
         Scenario {
             id: "backup_to_vps_ssh",
@@ -111,6 +121,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: false,
             source_hint: "~/Documents",
             dest_hint: "user@server:/home/user/backup",
+            excludes: &[],
         },
         Scenario {
             id: "sync_two_local",
@@ -123,6 +134,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: true,
             source_hint: "~/folderA",
             dest_hint: "~/folderB",
+            excludes: &[],
         },
         Scenario {
             id: "mirror_local_to_remote",
@@ -135,6 +147,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: true,
             source_hint: "~/Documents",
             dest_hint: "gdrive:Mirror",
+            excludes: &[],
         },
         Scenario {
             id: "restore_from_backup",
@@ -147,6 +160,7 @@ pub fn builtin_scenarios() -> Vec<Scenario> {
             recommend_dry_run: true,
             source_hint: "/mnt/backup/Documents",
             dest_hint: "~/Documents",
+            excludes: &[],
         },
     ]
 }

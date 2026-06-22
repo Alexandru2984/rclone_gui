@@ -248,6 +248,7 @@ mod tests {
             destination: "/dst/".into(),
             dry_run: false,
             delete: false,
+            options: Default::default(),
         };
         let id1 = store.save_profile(&spec).unwrap();
 

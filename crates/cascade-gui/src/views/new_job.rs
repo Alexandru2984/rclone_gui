@@ -10,11 +10,11 @@ use std::sync::Arc;
 use adw::prelude::*;
 use gtk::gio;
 
-use cascade_core::job::{JobSpec, OpKind};
+use cascade_core::job::{AdvancedOptions, JobSpec, OpKind};
 use cascade_core::logs::LogWriter;
 use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle};
 use cascade_core::security::destructive::RiskLevel;
-use cascade_core::security::path;
+use cascade_core::security::{flags, path};
 use cascade_core::Tool;
 
 use crate::ctx::AppCtx;
@@ -31,6 +31,18 @@ struct Inputs {
     source: adw::EntryRow,
     dest: adw::EntryRow,
     delete: adw::SwitchRow,
+
+    // Advanced options
+    adv_excludes: adw::EntryRow,
+    adv_includes: adw::EntryRow,
+    adv_transfers: adw::SpinRow,
+    adv_checkers: adw::SpinRow,
+    adv_bwlimit: adw::EntryRow,
+    adv_retries: adw::SpinRow,
+    adv_checksum: adw::SwitchRow,
+    adv_compress: adw::SwitchRow,
+    adv_ssh_port: adw::SpinRow,
+    adv_custom: adw::EntryRow,
 
     preview: gtk::Label,
     risk: gtk::Label,
@@ -134,6 +146,46 @@ pub fn build(
     let opts_group = adw::PreferencesGroup::builder().title("Options").build();
     opts_group.add(&delete);
 
+    // Advanced options, collapsed by default.
+    let adv_excludes = adw::EntryRow::builder()
+        .title("Exclude patterns (comma-separated)")
+        .build();
+    let adv_includes = adw::EntryRow::builder()
+        .title("Include patterns (comma-separated)")
+        .build();
+    let adv_transfers = spin_row("Parallel transfers — rclone (0 = default)", 0.0, 64.0);
+    let adv_checkers = spin_row("Checkers — rclone (0 = default)", 0.0, 64.0);
+    let adv_bwlimit = adw::EntryRow::builder()
+        .title("Bandwidth limit — rclone (e.g. 10M)")
+        .build();
+    let adv_retries = spin_row("Retries — rclone (0 = default)", 0.0, 20.0);
+    let adv_checksum = adw::SwitchRow::builder()
+        .title("Verify with checksum")
+        .build();
+    let adv_compress = adw::SwitchRow::builder()
+        .title("Compress in transit — rsync (-z)")
+        .build();
+    let adv_ssh_port = spin_row("SSH port — rsync (0 = default)", 0.0, 65535.0);
+    let adv_custom = adw::EntryRow::builder()
+        .title("Custom flags (quoted, space-separated)")
+        .build();
+
+    let advanced = adw::ExpanderRow::builder()
+        .title("Advanced options")
+        .subtitle("Patterns, performance, and custom flags")
+        .build();
+    for row in [&adv_excludes, &adv_includes, &adv_bwlimit, &adv_custom] {
+        advanced.add_row(row);
+    }
+    advanced.add_row(&adv_transfers);
+    advanced.add_row(&adv_checkers);
+    advanced.add_row(&adv_retries);
+    advanced.add_row(&adv_ssh_port);
+    advanced.add_row(&adv_checksum);
+    advanced.add_row(&adv_compress);
+    let adv_group = adw::PreferencesGroup::new();
+    adv_group.add(&advanced);
+
     let preview = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
@@ -210,6 +262,7 @@ pub fn build(
     page.add(&job_group);
     page.add(&paths_group);
     page.add(&opts_group);
+    page.add(&adv_group);
     page.add(&cmd_group);
     page.add(&progress_group);
     page.add(&log_group);
@@ -230,6 +283,16 @@ pub fn build(
         source,
         dest,
         delete,
+        adv_excludes,
+        adv_includes,
+        adv_transfers,
+        adv_checkers,
+        adv_bwlimit,
+        adv_retries,
+        adv_checksum,
+        adv_compress,
+        adv_ssh_port,
+        adv_custom,
         preview,
         risk,
         progress_bar,
@@ -250,6 +313,32 @@ pub fn build(
         root: outer.upcast(),
         inputs,
     }
+}
+
+fn spin_row(title: &str, lower: f64, upper: f64) -> adw::SpinRow {
+    adw::SpinRow::builder()
+        .title(title)
+        .adjustment(&gtk::Adjustment::new(0.0, lower, upper, 1.0, 1.0, 0.0))
+        .build()
+}
+
+/// A spin value of 0 means "unset" → `None`.
+fn spin_opt(row: &adw::SpinRow) -> Option<u32> {
+    let v = row.value() as u32;
+    if v == 0 {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// Split a comma-separated patterns field into trimmed, non-empty items.
+fn split_csv(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn browse_button() -> gtk::Button {
@@ -274,6 +363,16 @@ impl Inputs {
         on!(self.source, connect_changed);
         on!(self.dest, connect_changed);
         on!(self.delete, connect_active_notify);
+        on!(self.adv_excludes, connect_changed);
+        on!(self.adv_includes, connect_changed);
+        on!(self.adv_bwlimit, connect_changed);
+        on!(self.adv_custom, connect_changed);
+        on!(self.adv_transfers, connect_value_notify);
+        on!(self.adv_checkers, connect_value_notify);
+        on!(self.adv_retries, connect_value_notify);
+        on!(self.adv_ssh_port, connect_value_notify);
+        on!(self.adv_checksum, connect_active_notify);
+        on!(self.adv_compress, connect_active_notify);
 
         // Add + wire a folder-picker button onto each path row.
         connect_browse(self, &self.source);
@@ -326,6 +425,21 @@ impl Inputs {
         self.source.set_text(&spec.source);
         self.dest.set_text(&spec.destination);
         self.delete.set_active(spec.delete);
+
+        let o = &spec.options;
+        self.adv_excludes.set_text(&o.excludes.join(", "));
+        self.adv_includes.set_text(&o.includes.join(", "));
+        self.adv_transfers
+            .set_value(o.transfers.unwrap_or(0) as f64);
+        self.adv_checkers.set_value(o.checkers.unwrap_or(0) as f64);
+        self.adv_bwlimit
+            .set_text(o.bwlimit.as_deref().unwrap_or(""));
+        self.adv_retries.set_value(o.retries.unwrap_or(0) as f64);
+        self.adv_checksum.set_active(o.checksum);
+        self.adv_compress.set_active(o.compress);
+        self.adv_ssh_port.set_value(o.ssh_port.unwrap_or(0) as f64);
+        self.adv_custom.set_text(&o.extra_flags.join(" "));
+
         self.refresh_preview();
     }
 
@@ -379,6 +493,28 @@ impl Inputs {
             }
         };
 
+        let extra_flags =
+            flags::parse(&self.adv_custom.text()).map_err(|e| format!("Custom flags: {e}"))?;
+        let options = AdvancedOptions {
+            excludes: split_csv(&self.adv_excludes.text()),
+            includes: split_csv(&self.adv_includes.text()),
+            transfers: spin_opt(&self.adv_transfers),
+            checkers: spin_opt(&self.adv_checkers),
+            bwlimit: {
+                let b = self.adv_bwlimit.text().trim().to_string();
+                if b.is_empty() {
+                    None
+                } else {
+                    Some(b)
+                }
+            },
+            retries: spin_opt(&self.adv_retries),
+            checksum: self.adv_checksum.is_active(),
+            compress: self.adv_compress.is_active(),
+            ssh_port: spin_opt(&self.adv_ssh_port).map(|v| v as u16),
+            extra_flags,
+        };
+
         Ok(JobSpec {
             name,
             tool,
@@ -387,6 +523,7 @@ impl Inputs {
             destination: dest,
             dry_run: false,
             delete: self.delete.is_active(),
+            options,
         })
     }
 

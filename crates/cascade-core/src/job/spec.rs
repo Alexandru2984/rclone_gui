@@ -42,6 +42,31 @@ impl OpKind {
     }
 }
 
+/// Advanced (power-user) options. Each maps to the relevant tool's flags;
+/// options that don't apply to the chosen tool are simply ignored.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdvancedOptions {
+    pub excludes: Vec<String>,
+    pub includes: Vec<String>,
+    /// rclone `--transfers`.
+    pub transfers: Option<u32>,
+    /// rclone `--checkers`.
+    pub checkers: Option<u32>,
+    /// rclone `--bwlimit` (e.g. "10M"); a single argv item, never shell-expanded.
+    pub bwlimit: Option<String>,
+    /// rclone `--retries`.
+    pub retries: Option<u32>,
+    /// Verify by checksum (rclone `--checksum`, rsync `--checksum`).
+    pub checksum: bool,
+    /// rsync `-z` compression.
+    pub compress: bool,
+    /// rsync SSH transport port (`-e "ssh -p N"`).
+    pub ssh_port: Option<u16>,
+    /// Already-tokenized custom flags (validated by `security::flags`).
+    pub extra_flags: Vec<String>,
+}
+
 /// A fully-specified job ready to be built into an argv and run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobSpec {
@@ -53,6 +78,9 @@ pub struct JobSpec {
     pub dry_run: bool,
     /// For `Copy`: opt-in deletion of dest-only files. (`Sync`/`Move` imply it.)
     pub delete: bool,
+    /// Power-user options. Defaulted so older serialized profiles still load.
+    #[serde(default)]
+    pub options: AdvancedOptions,
 }
 
 impl JobSpec {
@@ -78,6 +106,7 @@ impl JobSpec {
 
     /// Build the concrete argv. Never produces a shell string.
     pub fn build_argv(&self) -> Result<Vec<String>> {
+        let o = &self.options;
         match self.tool {
             Tool::Rclone => {
                 let op = match self.op {
@@ -87,14 +116,31 @@ impl JobSpec {
                 };
                 let opts = RcloneOptions {
                     dry_run: self.dry_run,
+                    transfers: o.transfers,
+                    checkers: o.checkers,
+                    checksum: o.checksum,
+                    bwlimit: o.bwlimit.clone(),
+                    retries: o.retries,
+                    excludes: o.excludes.clone(),
+                    includes: o.includes.clone(),
+                    extra_flags: o.extra_flags.clone(),
                     ..Default::default()
                 };
                 rclone_cmd::build_args(op, &self.source, Some(&self.destination), &opts)
             }
             Tool::Rsync => {
+                let mut extra_flags = o.extra_flags.clone();
+                if o.checksum {
+                    extra_flags.push("--checksum".into());
+                }
                 let mut opts = RsyncOptions {
                     dry_run: self.dry_run,
                     delete: self.delete_effective(),
+                    compress: o.compress,
+                    excludes: o.excludes.clone(),
+                    includes: o.includes.clone(),
+                    ssh_port: o.ssh_port,
+                    extra_flags,
                     ..Default::default()
                 };
                 // rsync has no `move`; emulate it with --remove-source-files.
@@ -127,6 +173,7 @@ mod tests {
             destination: "/dst/".into(),
             dry_run: false,
             delete: false,
+            options: AdvancedOptions::default(),
         }
     }
 
@@ -170,6 +217,43 @@ mod tests {
         assert!(argv.contains(&"--remove-source-files".to_string()));
         assert!(!argv.contains(&"--delete".to_string()));
         assert_eq!(s.risk(), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn rclone_advanced_options_map_to_flags() {
+        let mut s = spec(Tool::Rclone, OpKind::Copy);
+        s.options = AdvancedOptions {
+            excludes: vec!["*.tmp".into()],
+            transfers: Some(8),
+            bwlimit: Some("10M".into()),
+            checksum: true,
+            extra_flags: vec!["--fast-list".into()],
+            ..Default::default()
+        };
+        let joined = s.build_argv().unwrap().join(" ");
+        assert!(joined.contains("--exclude *.tmp"));
+        assert!(joined.contains("--transfers 8"));
+        assert!(joined.contains("--bwlimit 10M"));
+        assert!(joined.contains("--checksum"));
+        assert!(joined.contains("--fast-list"));
+    }
+
+    #[test]
+    fn rsync_advanced_options_map_to_flags() {
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        s.options = AdvancedOptions {
+            excludes: vec![".git".into()],
+            compress: true,
+            checksum: true,
+            ssh_port: Some(2222),
+            ..Default::default()
+        };
+        let argv = s.build_argv().unwrap();
+        let joined = argv.join(" ");
+        assert!(joined.contains("--exclude .git"));
+        assert!(argv.contains(&"-z".to_string()));
+        assert!(argv.contains(&"--checksum".to_string()));
+        assert!(joined.contains("ssh -p 2222"));
     }
 
     #[test]

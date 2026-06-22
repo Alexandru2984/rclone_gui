@@ -6,5 +6,6 @@
 //! - [`sanitize`]: redact secrets from log output before display or storage.
 
 pub mod destructive;
+pub mod flags;
 pub mod path;
 pub mod sanitize;

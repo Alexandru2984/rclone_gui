@@ -3,7 +3,7 @@
 pub mod spec;
 pub mod state;
 
-pub use spec::{JobSpec, OpKind};
+pub use spec::{AdvancedOptions, JobSpec, OpKind};
 pub use state::JobStatus;
 
 use serde::{Deserialize, Serialize};
