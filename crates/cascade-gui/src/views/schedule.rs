@@ -135,7 +135,7 @@ fn tool_path(tool: Tool) -> Option<String> {
     info.map(|i| i.path.to_string_lossy().into_owned())
 }
 
-fn systemd_user_dir() -> String {
+pub(crate) fn systemd_user_dir() -> String {
     let cfg = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .filter(|s| !s.is_empty())

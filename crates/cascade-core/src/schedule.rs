@@ -85,6 +85,15 @@ pub fn build_units(
     }
 }
 
+/// Read the `OnCalendar=` value out of a `.timer` file's contents.
+pub fn parse_on_calendar(timer_contents: &str) -> Option<String> {
+    timer_contents.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("OnCalendar=")
+            .map(|v| v.trim().to_string())
+    })
+}
+
 /// Build a systemd `ExecStart=` line from a binary and argv, quoting as needed.
 fn exec_start(binary_path: &str, argv: &[String]) -> String {
     let mut out = systemd_quote(binary_path);
@@ -141,6 +150,16 @@ mod tests {
         assert!(u.timer.contains("OnCalendar=daily"));
         assert!(u.timer.contains("WantedBy=timers.target"));
         assert!(u.timer.contains("Persistent=true"));
+    }
+
+    #[test]
+    fn reads_on_calendar_back() {
+        let u = build_units("x", "/usr/bin/rsync", &["-a".into()], "Mon *-*-* 09:00");
+        assert_eq!(
+            parse_on_calendar(&u.timer).as_deref(),
+            Some("Mon *-*-* 09:00")
+        );
+        assert_eq!(parse_on_calendar("[Timer]\n"), None);
     }
 
     #[test]

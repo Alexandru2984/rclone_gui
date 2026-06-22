@@ -6,8 +6,11 @@ use std::time::Duration;
 
 use adw::prelude::*;
 
-use cascade_core::process::capture_env;
+use cascade_core::process::{capture, capture_env};
 use cascade_core::rclone::rcd::{parse_version, Rcd};
+
+/// A reusable "rebuild the schedules list" callback.
+type Refresh = Rc<dyn Fn()>;
 
 pub fn build() -> gtk::Widget {
     let tools = adw::PreferencesGroup::builder()
@@ -95,7 +98,118 @@ pub fn build() -> gtk::Widget {
     let page = adw::PreferencesPage::new();
     page.add(&tools);
     page.add(&rcd_group);
+    page.add(&schedules_group());
     page.upcast()
+}
+
+/// A group listing the systemd user timers Cascade created, each removable.
+fn schedules_group() -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Scheduled jobs")
+        .description("systemd user timers created via “Schedule…”")
+        .build();
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(vec!["boxed-list".to_string()])
+        .build();
+    let empty = gtk::Label::builder()
+        .label("No schedules yet.")
+        .xalign(0.0)
+        .css_classes(vec!["dim-label".to_string()])
+        .build();
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    column.append(&empty);
+    column.append(&list);
+    group.add(&column);
+
+    // Self-referential refresh: delete handlers call back into it.
+    let refresh_cell: Rc<RefCell<Option<Refresh>>> = Rc::new(RefCell::new(None));
+    let refresh: Refresh = {
+        let list = list.clone();
+        let empty = empty.clone();
+        let refresh_cell = refresh_cell.clone();
+        Rc::new(move || {
+            list.remove_all();
+            let timers = list_cascade_timers();
+            empty.set_visible(timers.is_empty());
+            list.set_visible(!timers.is_empty());
+            for (file, on_calendar) in timers {
+                let title = file
+                    .trim_start_matches("cascade-")
+                    .trim_end_matches(".timer");
+                let row = adw::ActionRow::builder()
+                    .title(title)
+                    .subtitle(&on_calendar)
+                    .build();
+                row.add_prefix(&gtk::Image::from_icon_name("alarm-symbolic"));
+                let del = gtk::Button::builder()
+                    .icon_name("user-trash-symbolic")
+                    .valign(gtk::Align::Center)
+                    .css_classes(vec!["flat".to_string()])
+                    .tooltip_text("Remove this schedule")
+                    .build();
+                let refresh_cell = refresh_cell.clone();
+                let file = file.clone();
+                del.connect_clicked(move |_| {
+                    let again = refresh_cell.borrow().clone();
+                    delete_timer(file.clone(), again);
+                });
+                row.add_suffix(&del);
+                list.append(&row);
+            }
+        })
+    };
+    *refresh_cell.borrow_mut() = Some(refresh.clone());
+    refresh();
+
+    group
+}
+
+/// List Cascade-created timers as `(filename, OnCalendar)`.
+fn list_cascade_timers() -> Vec<(String, String)> {
+    let dir = crate::views::schedule::systemd_user_dir();
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("cascade-") && name.ends_with(".timer") {
+                let on_cal = std::fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|c| cascade_core::schedule::parse_on_calendar(&c))
+                    .unwrap_or_else(|| "?".into());
+                out.push((name, on_cal));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Disable + remove a timer (and its service), then refresh the list.
+fn delete_timer(timer_file: String, refresh: Option<Refresh>) {
+    let rx = capture(
+        "systemctl",
+        vec![
+            "--user".into(),
+            "disable".into(),
+            "--now".into(),
+            timer_file.clone(),
+        ],
+    );
+    glib::spawn_future_local(async move {
+        let _ = rx.recv().await;
+        let dir = crate::views::schedule::systemd_user_dir();
+        let _ = std::fs::remove_file(format!("{dir}/{timer_file}"));
+        let _ = std::fs::remove_file(format!(
+            "{dir}/{}",
+            timer_file.replace(".timer", ".service")
+        ));
+        let reload = capture("systemctl", vec!["--user".into(), "daemon-reload".into()]);
+        let _ = reload.recv().await;
+        if let Some(refresh) = refresh {
+            refresh();
+        }
+    });
 }
 
 fn tool_row(name: &str, version: Option<String>, missing_hint: &str) -> adw::ActionRow {
