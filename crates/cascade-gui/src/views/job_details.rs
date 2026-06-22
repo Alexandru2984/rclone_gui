@@ -13,13 +13,13 @@ use crate::ctx::AppCtx;
 /// Show the details dialog for `run`, attached to `parent`.
 pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Run details");
+    dialog.set_title(&crate::i18n::tr("Run details"));
     dialog.set_content_width(700);
     dialog.set_content_height(600);
 
     // --- Metadata ---
     let info = adw::PreferencesGroup::new();
-    info.add(&detail_row("Status", &run.status));
+    info.add(&detail_row(&crate::i18n::tr("Status"), &run.status));
     info.add(&detail_row(
         "Operation",
         &format!(
@@ -35,11 +35,17 @@ pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord
             .map(|c| c.to_string())
             .unwrap_or_else(|| "—".into()),
     ));
-    info.add(&detail_row("Started", &fmt_epoch(run.started_at)));
-    info.add(&detail_row("Ended", &fmt_epoch(run.ended_at)));
+    info.add(&detail_row(
+        &crate::i18n::tr("Started"),
+        &fmt_epoch(run.started_at),
+    ));
+    info.add(&detail_row(
+        &crate::i18n::tr("Ended"),
+        &fmt_epoch(run.ended_at),
+    ));
 
     let cmd_row = adw::ActionRow::builder()
-        .title("Command")
+        .title(crate::i18n::tr("Command"))
         .subtitle(&run.argv_preview)
         .build();
     cmd_row.add_css_class("property");
@@ -89,11 +95,11 @@ pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord
         })
     };
 
-    let all = gtk::ToggleButton::with_label("All");
+    let all = gtk::ToggleButton::with_label(&crate::i18n::tr("All"));
     all.set_active(true);
-    let errors = gtk::ToggleButton::with_label("Errors");
-    let warnings = gtk::ToggleButton::with_label("Warnings");
-    let infos = gtk::ToggleButton::with_label("Info");
+    let errors = gtk::ToggleButton::with_label(&crate::i18n::tr("Errors"));
+    let warnings = gtk::ToggleButton::with_label(&crate::i18n::tr("Warnings"));
+    let infos = gtk::ToggleButton::with_label(&crate::i18n::tr("Info"));
     for b in [&errors, &warnings, &infos] {
         b.set_group(Some(&all));
     }
@@ -121,7 +127,9 @@ pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord
     on_filter!(infos, Some(Level::Info));
     apply(None);
 
-    let log_group = adw::PreferencesGroup::builder().title("Log").build();
+    let log_group = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Log"))
+        .build();
     log_group.add(&filters);
 
     // --- Assemble ---

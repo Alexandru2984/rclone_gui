@@ -25,7 +25,9 @@ impl ProfilesView {
             .css_classes(vec!["boxed-list".to_string()])
             .build();
         let empty = gtk::Label::builder()
-            .label("No profiles yet — configure a job and press “Save profile”.")
+            .label(crate::i18n::tr(
+                "No profiles yet — configure a job and press “Save profile”.",
+            ))
             .css_classes(vec!["dim-label".to_string()])
             .margin_top(24)
             .build();
@@ -76,7 +78,7 @@ impl ProfilesView {
             row.add_css_class("property");
 
             let load = gtk::Button::builder()
-                .label("Load")
+                .label(crate::i18n::tr("Load"))
                 .valign(gtk::Align::Center)
                 .css_classes(vec!["flat".to_string()])
                 .build();

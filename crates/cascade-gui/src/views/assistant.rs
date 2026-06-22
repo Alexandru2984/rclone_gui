@@ -40,15 +40,17 @@ pub fn build(window: adw::ApplicationWindow, on_open: Rc<dyn Fn(JobSpec)>) -> gt
     }
 
     let intro = adw::PreferencesGroup::builder()
-        .title("Backup Assistant")
-        .description("Pick a scenario and we'll set up the job for you")
+        .title(crate::i18n::tr("Backup Assistant"))
+        .description(crate::i18n::tr(
+            "Pick a scenario and we'll set up the job for you",
+        ))
         .build();
     intro.add(&list);
 
     let page = adw::PreferencesPage::new();
     page.add(&intro);
 
-    let list_page = adw::NavigationPage::new(&page, "Backup Assistant");
+    let list_page = adw::NavigationPage::new(&page, &crate::i18n::tr("Backup Assistant"));
     nav.add(&list_page);
     nav.upcast()
 }
@@ -59,18 +61,18 @@ fn detail_page(
     on_open: Rc<dyn Fn(JobSpec)>,
 ) -> adw::NavigationPage {
     let source = adw::EntryRow::builder()
-        .title("Source")
+        .title(crate::i18n::tr("Source"))
         .text(sc.source_hint)
         .build();
     let dest = adw::EntryRow::builder()
-        .title("Destination")
+        .title(crate::i18n::tr("Destination"))
         .text(sc.dest_hint)
         .build();
     add_browse(&source, &window);
     add_browse(&dest, &window);
 
     let paths = adw::PreferencesGroup::builder()
-        .title("Paths")
+        .title(crate::i18n::tr("Paths"))
         .description(sc.description)
         .build();
     paths.add(&source);
@@ -92,7 +94,7 @@ fn detail_page(
     }
 
     let open = gtk::Button::builder()
-        .label("Open in New Job")
+        .label(crate::i18n::tr("Open in New Job"))
         .halign(gtk::Align::End)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
@@ -126,13 +128,15 @@ fn add_browse(row: &adw::EntryRow, window: &adw::ApplicationWindow) {
     let button = gtk::Button::from_icon_name("folder-open-symbolic");
     button.add_css_class("flat");
     button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some("Choose a local folder"));
+    button.set_tooltip_text(Some(&crate::i18n::tr("Choose a local folder")));
     row.add_suffix(&button);
 
     let entry = row.clone();
     let window = window.clone();
     button.connect_clicked(move |_| {
-        let dialog = gtk::FileDialog::builder().title("Select folder").build();
+        let dialog = gtk::FileDialog::builder()
+            .title(crate::i18n::tr("Select folder"))
+            .build();
         let entry = entry.clone();
         dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
             if let Ok(file) = res {

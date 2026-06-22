@@ -52,3 +52,102 @@ msgstr "Adaugă în coadă"
 
 msgid "Schedule…"
 msgstr "Programează…"
+
+msgid "Copy"
+msgstr "Copiere"
+
+msgid "Sync (mirror)"
+msgstr "Sincronizare (oglindă)"
+
+msgid "Move"
+msgstr "Mutare"
+
+msgid "Pause"
+msgstr "Pauză"
+
+msgid "Resume"
+msgstr "Reia"
+
+msgid "Clear finished"
+msgstr "Curăță terminate"
+
+msgid "Jobs"
+msgstr "Joburi"
+
+msgid "queued"
+msgstr "în coadă"
+
+msgid "Tool"
+msgstr "Unealtă"
+
+msgid "Operation"
+msgstr "Operațiune"
+
+msgid "Source"
+msgstr "Sursă"
+
+msgid "Destination"
+msgstr "Destinație"
+
+msgid "Paths"
+msgstr "Căi"
+
+msgid "Options"
+msgstr "Opțiuni"
+
+msgid "Command preview"
+msgstr "Previzualizare comandă"
+
+msgid "Progress"
+msgstr "Progres"
+
+msgid "Live output"
+msgstr "Ieșire live"
+
+msgid "Name (optional)"
+msgstr "Nume (opțional)"
+
+msgid "Theme"
+msgstr "Temă"
+
+msgid "Appearance"
+msgstr "Aspect"
+
+msgid "Behavior"
+msgstr "Comportament"
+
+msgid "Follow system"
+msgstr "Urmează sistemul"
+
+msgid "Light"
+msgstr "Luminos"
+
+msgid "Dark"
+msgstr "Întunecat"
+
+msgid "Load"
+msgstr "Încarcă"
+
+msgid "Delete"
+msgstr "Șterge"
+
+msgid "Delete remote"
+msgstr "Șterge remote-ul"
+
+msgid "Tools"
+msgstr "Unelte"
+
+msgid "Scheduled jobs"
+msgstr "Joburi programate"
+
+msgid "Create schedule"
+msgstr "Creează programare"
+
+msgid "Destructive operation"
+msgstr "Operațiune destructivă"
+
+msgid "Run anyway"
+msgstr "Rulează oricum"
+
+msgid "Dry-run first"
+msgstr "Întâi simulare"

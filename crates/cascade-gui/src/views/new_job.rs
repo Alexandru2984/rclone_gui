@@ -110,70 +110,103 @@ pub fn build(
     let _ = std::fs::create_dir_all(&dst);
     let _ = std::fs::write(src.join("example.txt"), b"demo");
 
-    let name = adw::EntryRow::builder().title("Name (optional)").build();
+    let name = adw::EntryRow::builder()
+        .title(crate::i18n::tr("Name (optional)"))
+        .build();
 
-    let tool = adw::ComboRow::builder().title("Tool").build();
+    let tool = adw::ComboRow::builder()
+        .title(crate::i18n::tr("Tool"))
+        .build();
     tool.set_model(Some(&gtk::StringList::new(&["rsync", "rclone"])));
-    let op = adw::ComboRow::builder().title("Operation").build();
-    op.set_model(Some(&gtk::StringList::new(&[
-        "Copy",
-        "Sync (mirror)",
-        "Move",
-    ])));
+    let op = adw::ComboRow::builder()
+        .title(crate::i18n::tr("Operation"))
+        .build();
+    let op_labels = [
+        crate::i18n::tr("Copy"),
+        crate::i18n::tr("Sync (mirror)"),
+        crate::i18n::tr("Move"),
+    ];
+    op.set_model(Some(&gtk::StringList::new(
+        &op_labels.iter().map(String::as_str).collect::<Vec<_>>(),
+    )));
 
-    let job_group = adw::PreferencesGroup::builder().title("Job").build();
+    let job_group = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Job"))
+        .build();
     job_group.add(&name);
     job_group.add(&tool);
     job_group.add(&op);
 
     let source = adw::EntryRow::builder()
-        .title("Source")
+        .title(crate::i18n::tr("Source"))
         .text(format!("{}/", src.display()))
         .build();
     let dest = adw::EntryRow::builder()
-        .title("Destination")
+        .title(crate::i18n::tr("Destination"))
         .text(format!("{}/", dst.display()))
         .build();
     // Folder-picker buttons are added and wired in `connect_browse` during `wire`.
 
-    let paths_group = adw::PreferencesGroup::builder().title("Paths").build();
+    let paths_group = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Paths"))
+        .build();
     paths_group.add(&source);
     paths_group.add(&dest);
 
     let delete = adw::SwitchRow::builder()
-        .title("Delete extra files at destination")
-        .subtitle("Applies to Copy. Sync and Move always remove on their own.")
+        .title(crate::i18n::tr("Delete extra files at destination"))
+        .subtitle(crate::i18n::tr(
+            "Applies to Copy. Sync and Move always remove on their own.",
+        ))
         .build();
-    let opts_group = adw::PreferencesGroup::builder().title("Options").build();
+    let opts_group = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Options"))
+        .build();
     opts_group.add(&delete);
 
     // Advanced options, collapsed by default.
     let adv_excludes = adw::EntryRow::builder()
-        .title("Exclude patterns (comma-separated)")
+        .title(crate::i18n::tr("Exclude patterns (comma-separated)"))
         .build();
     let adv_includes = adw::EntryRow::builder()
-        .title("Include patterns (comma-separated)")
+        .title(crate::i18n::tr("Include patterns (comma-separated)"))
         .build();
-    let adv_transfers = spin_row("Parallel transfers — rclone (0 = default)", 0.0, 64.0);
-    let adv_checkers = spin_row("Checkers — rclone (0 = default)", 0.0, 64.0);
+    let adv_transfers = spin_row(
+        &crate::i18n::tr("Parallel transfers — rclone (0 = default)"),
+        0.0,
+        64.0,
+    );
+    let adv_checkers = spin_row(
+        &crate::i18n::tr("Checkers — rclone (0 = default)"),
+        0.0,
+        64.0,
+    );
     let adv_bwlimit = adw::EntryRow::builder()
-        .title("Bandwidth limit — rclone (e.g. 10M)")
+        .title(crate::i18n::tr("Bandwidth limit — rclone (e.g. 10M)"))
         .build();
-    let adv_retries = spin_row("Retries — rclone (0 = default)", 0.0, 20.0);
+    let adv_retries = spin_row(
+        &crate::i18n::tr("Retries — rclone (0 = default)"),
+        0.0,
+        20.0,
+    );
     let adv_checksum = adw::SwitchRow::builder()
-        .title("Verify with checksum")
+        .title(crate::i18n::tr("Verify with checksum"))
         .build();
     let adv_compress = adw::SwitchRow::builder()
-        .title("Compress in transit — rsync (-z)")
+        .title(crate::i18n::tr("Compress in transit — rsync (-z)"))
         .build();
-    let adv_ssh_port = spin_row("SSH port — rsync (0 = default)", 0.0, 65535.0);
+    let adv_ssh_port = spin_row(
+        &crate::i18n::tr("SSH port — rsync (0 = default)"),
+        0.0,
+        65535.0,
+    );
     let adv_custom = adw::EntryRow::builder()
-        .title("Custom flags (quoted, space-separated)")
+        .title(crate::i18n::tr("Custom flags (quoted, space-separated)"))
         .build();
 
     let advanced = adw::ExpanderRow::builder()
-        .title("Advanced options")
-        .subtitle("Patterns, performance, and custom flags")
+        .title(crate::i18n::tr("Advanced options"))
+        .subtitle(crate::i18n::tr("Patterns, performance, and custom flags"))
         .build();
     for row in [&adv_excludes, &adv_includes, &adv_bwlimit, &adv_custom] {
         advanced.add_row(row);
@@ -192,14 +225,14 @@ pub fn build(
         .wrap(true)
         .selectable(true)
         .css_classes(vec!["monospace".to_string()])
-        .label("…")
+        .label(crate::i18n::tr("…"))
         .build();
     let risk = gtk::Label::builder().xalign(0.0).build();
     let cmd_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     cmd_box.append(&preview);
     cmd_box.append(&risk);
     let cmd_group = adw::PreferencesGroup::builder()
-        .title("Command preview")
+        .title(crate::i18n::tr("Command preview"))
         .build();
     cmd_group.add(&cmd_box);
 
@@ -215,7 +248,9 @@ pub fn build(
     let progress_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
     progress_box.append(&progress_bar);
     progress_box.append(&progress_label);
-    let progress_group = adw::PreferencesGroup::builder().title("Progress").build();
+    let progress_group = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Progress"))
+        .build();
     progress_group.add(&progress_box);
 
     let log_view = gtk::TextView::builder()
@@ -229,7 +264,7 @@ pub fn build(
         .child(&log_view)
         .build();
     let log_group = adw::PreferencesGroup::builder()
-        .title("Live output")
+        .title(crate::i18n::tr("Live output"))
         .build();
     log_group.add(&scroller);
 
@@ -378,7 +413,7 @@ fn browse_button() -> gtk::Button {
     let b = gtk::Button::from_icon_name("folder-open-symbolic");
     b.add_css_class("flat");
     b.set_valign(gtk::Align::Center);
-    b.set_tooltip_text(Some("Choose a folder"));
+    b.set_tooltip_text(Some(&crate::i18n::tr("Choose a folder")));
     b
 }
 
@@ -572,7 +607,7 @@ impl Inputs {
             }
             Err(msg) => {
                 self.preview.set_label(&format!("⚠ {msg}"));
-                self.risk.set_label("");
+                self.risk.set_label(&crate::i18n::tr(""));
                 for c in ["success", "warning", "error"] {
                     self.risk.remove_css_class(c);
                 }
@@ -622,15 +657,19 @@ impl Inputs {
     }
 
     fn confirm_destructive(self: &Rc<Self>, command_desc: &str) {
-        let body = format!(
-            "This operation can delete files at the destination.\n\n{command_desc}\n\n\
-             Running a dry-run first lets you preview exactly what would change."
-        );
-        let dialog = adw::AlertDialog::new(Some("Destructive operation"), Some(&body));
+        let body = crate::i18n::tr(
+            "This operation can delete files at the destination.\n\n%s\n\nRunning a dry-run first lets you preview exactly what would change.",
+        )
+        .replace("%s", command_desc);
+        let cancel_l = crate::i18n::tr("Cancel");
+        let dry_l = crate::i18n::tr("Dry-run first");
+        let run_l = crate::i18n::tr("Run anyway");
+        let dialog =
+            adw::AlertDialog::new(Some(&crate::i18n::tr("Destructive operation")), Some(&body));
         dialog.add_responses(&[
-            ("cancel", "Cancel"),
-            ("dry", "Dry-run first"),
-            ("run", "Run anyway"),
+            ("cancel", cancel_l.as_str()),
+            ("dry", dry_l.as_str()),
+            ("run", run_l.as_str()),
         ]);
         dialog.set_response_appearance("run", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("dry"));
@@ -813,7 +852,7 @@ impl Inputs {
         if running {
             self.progress_bar.set_fraction(0.0);
             self.progress_bar.set_visible(true);
-            self.progress_label.set_label("starting…");
+            self.progress_label.set_label(&crate::i18n::tr("starting…"));
             self.progress_label.set_visible(true);
         }
     }
@@ -838,11 +877,11 @@ impl Inputs {
 /// (e.g. one large database dump).
 fn connect_browse(inputs: &Rc<Inputs>, row: &adw::EntryRow) {
     let folder = browse_button();
-    folder.set_tooltip_text(Some("Choose a folder"));
+    folder.set_tooltip_text(Some(&crate::i18n::tr("Choose a folder")));
     let file = gtk::Button::from_icon_name("text-x-generic-symbolic");
     file.add_css_class("flat");
     file.set_valign(gtk::Align::Center);
-    file.set_tooltip_text(Some("Choose a single file"));
+    file.set_tooltip_text(Some(&crate::i18n::tr("Choose a single file")));
     row.add_suffix(&file);
     row.add_suffix(&folder);
 
@@ -850,7 +889,9 @@ fn connect_browse(inputs: &Rc<Inputs>, row: &adw::EntryRow) {
         let this = inputs.clone();
         let target = row.clone();
         folder.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Select folder").build();
+            let dialog = gtk::FileDialog::builder()
+                .title(crate::i18n::tr("Select folder"))
+                .build();
             let entry = target.clone();
             let inner = this.clone();
             dialog.select_folder(Some(&this.window), gio::Cancellable::NONE, move |res| {
@@ -867,7 +908,9 @@ fn connect_browse(inputs: &Rc<Inputs>, row: &adw::EntryRow) {
         let this = inputs.clone();
         let target = row.clone();
         file.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Select file").build();
+            let dialog = gtk::FileDialog::builder()
+                .title(crate::i18n::tr("Select file"))
+                .build();
             let entry = target.clone();
             let inner = this.clone();
             dialog.open(Some(&this.window), gio::Cancellable::NONE, move |res| {

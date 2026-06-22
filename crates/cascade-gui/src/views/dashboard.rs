@@ -14,8 +14,10 @@ type Refresh = Rc<dyn Fn()>;
 
 pub fn build() -> gtk::Widget {
     let tools = adw::PreferencesGroup::builder()
-        .title("Tools")
-        .description("Cascade orchestrates these external programs")
+        .title(crate::i18n::tr("Tools"))
+        .description(crate::i18n::tr(
+            "Cascade orchestrates these external programs",
+        ))
         .build();
     tools.add(&tool_row(
         "rclone",
@@ -32,11 +34,11 @@ pub fn build() -> gtk::Widget {
     let status = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
-        .label("Not running.")
+        .label(crate::i18n::tr("Not running."))
         .css_classes(vec!["dim-label".to_string()])
         .build();
     let toggle = gtk::Button::builder()
-        .label("Start local RC daemon")
+        .label(crate::i18n::tr("Start local RC daemon"))
         .halign(gtk::Align::Start)
         .css_classes(vec!["pill".to_string()])
         .build();
@@ -45,8 +47,8 @@ pub fn build() -> gtk::Widget {
     row_box.append(&status);
     row_box.append(&toggle);
     let rcd_group = adw::PreferencesGroup::builder()
-        .title("rclone RC daemon")
-        .description("A local control daemon bound to 127.0.0.1 with random credentials — never exposed to the network")
+        .title(crate::i18n::tr("rclone RC daemon"))
+        .description(crate::i18n::tr("A local control daemon bound to 127.0.0.1 with random credentials — never exposed to the network"))
         .build();
     rcd_group.add(&row_box);
 
@@ -58,8 +60,8 @@ pub fn build() -> gtk::Widget {
             let mut st = state.borrow_mut();
             if let Some(rcd) = st.take() {
                 rcd.stop();
-                status.set_label("Not running.");
-                btn.set_label("Start local RC daemon");
+                status.set_label(&crate::i18n::tr("Not running."));
+                btn.set_label(&crate::i18n::tr("Start local RC daemon"));
                 return;
             }
             match Rcd::start() {
@@ -68,7 +70,7 @@ pub fn build() -> gtk::Widget {
                     let args = rcd.rc_args("core/version");
                     let env = rcd.rc_env();
                     status.set_label(&format!("Starting on {addr} …"));
-                    btn.set_label("Stop");
+                    btn.set_label(&crate::i18n::tr("Stop"));
                     *st = Some(rcd);
                     drop(st);
 
@@ -105,15 +107,17 @@ pub fn build() -> gtk::Widget {
 /// A group listing the systemd user timers Cascade created, each removable.
 fn schedules_group() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("Scheduled jobs")
-        .description("systemd user timers created via “Schedule…”")
+        .title(crate::i18n::tr("Scheduled jobs"))
+        .description(crate::i18n::tr(
+            "systemd user timers created via “Schedule…”",
+        ))
         .build();
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .css_classes(vec!["boxed-list".to_string()])
         .build();
     let empty = gtk::Label::builder()
-        .label("No schedules yet.")
+        .label(crate::i18n::tr("No schedules yet."))
         .xalign(0.0)
         .css_classes(vec!["dim-label".to_string()])
         .build();

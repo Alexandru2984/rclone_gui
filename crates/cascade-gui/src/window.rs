@@ -193,10 +193,9 @@ fn missing_tools_banner() -> Option<adw::Banner> {
     if missing.is_empty() {
         return None;
     }
-    let banner = adw::Banner::new(&format!(
-        "{} not found on PATH — related jobs will fail until it is installed.",
-        missing.join(" and ")
-    ));
+    let msg = tr("%s not found on PATH — related jobs will fail until it is installed.")
+        .replace("%s", &missing.join(" and "));
+    let banner = adw::Banner::new(&msg);
     banner.set_revealed(true);
     Some(banner)
 }

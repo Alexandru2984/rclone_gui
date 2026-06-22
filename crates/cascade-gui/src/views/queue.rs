@@ -49,24 +49,28 @@ impl QueueView {
             .css_classes(vec!["boxed-list".to_string()])
             .build();
         let empty = gtk::Label::builder()
-            .label("Queue is empty. Add jobs from “New Job → Add to queue”.")
+            .label(crate::i18n::tr(
+                "Queue is empty. Add jobs from “New Job → Add to queue”.",
+            ))
             .css_classes(vec!["dim-label".to_string()])
             .margin_top(24)
             .build();
 
         let pause = gtk::Button::builder()
-            .label("Pause")
+            .label(crate::i18n::tr("Pause"))
             .css_classes(vec!["pill".to_string()])
             .build();
         let clear = gtk::Button::builder()
-            .label("Clear finished")
+            .label(crate::i18n::tr("Clear finished"))
             .css_classes(vec!["pill".to_string()])
             .build();
         let header_buttons = gtk::Box::builder().spacing(6).build();
         header_buttons.append(&pause);
         header_buttons.append(&clear);
 
-        let group = adw::PreferencesGroup::builder().title("Jobs").build();
+        let group = adw::PreferencesGroup::builder()
+            .title(crate::i18n::tr("Jobs"))
+            .build();
         group.set_header_suffix(Some(&header_buttons));
         group.add(&empty);
         group.add(&list);
@@ -109,7 +113,11 @@ impl QueueView {
             pause.connect_clicked(move |btn| {
                 let now_paused = !this.paused.get();
                 this.paused.set(now_paused);
-                btn.set_label(if now_paused { "Resume" } else { "Pause" });
+                btn.set_label(&if now_paused {
+                    crate::i18n::tr("Resume")
+                } else {
+                    crate::i18n::tr("Pause")
+                });
                 if !now_paused {
                     this.pump();
                 }
@@ -130,7 +138,7 @@ impl QueueView {
 
         let row = adw::ActionRow::builder()
             .title(&spec.name)
-            .subtitle("queued")
+            .subtitle(crate::i18n::tr("queued"))
             .build();
 
         let mk = |icon: &str, tip: &str| {
@@ -141,10 +149,13 @@ impl QueueView {
                 .tooltip_text(tip)
                 .build()
         };
-        let up = mk("go-up-symbolic", "Move up");
-        let down = mk("go-down-symbolic", "Move down");
-        let remove = mk("list-remove-symbolic", "Remove from queue");
-        let cancel = mk("process-stop-symbolic", "Cancel");
+        let up = mk("go-up-symbolic", &crate::i18n::tr("Move up"));
+        let down = mk("go-down-symbolic", &crate::i18n::tr("Move down"));
+        let remove = mk(
+            "list-remove-symbolic",
+            &crate::i18n::tr("Remove from queue"),
+        );
+        let cancel = mk("process-stop-symbolic", &crate::i18n::tr("Cancel"));
         cancel.set_visible(false); // shown only while running
 
         for b in [&up, &down, &remove, &cancel] {
@@ -271,7 +282,7 @@ impl QueueView {
             .start_run(job_id, spec.dry_run, &preview)
             .unwrap_or(-1);
 
-        row.set_subtitle("running…");
+        row.set_subtitle(&crate::i18n::tr("running…"));
         // Switch the row controls from queued (reorder/remove) to running (cancel).
         if let Some(it) = self.items.borrow().get(&id) {
             it.up.set_visible(false);
@@ -348,7 +359,7 @@ impl QueueView {
         if let Some(it) = self.items.borrow().get(&id) {
             if let Some(handle) = &it.handle {
                 handle.cancel();
-                it.row.set_subtitle("cancelling…");
+                it.row.set_subtitle(&crate::i18n::tr("cancelling…"));
             }
         }
     }

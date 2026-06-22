@@ -12,16 +12,18 @@ use cascade_core::{rclone, rsync, schedule, Tool};
 /// Show the scheduling dialog for `spec`, attached to `parent`.
 pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Schedule job");
+    dialog.set_title(&crate::i18n::tr("Schedule job"));
     dialog.set_content_width(560);
 
     let when = adw::EntryRow::builder()
-        .title("Run on (systemd OnCalendar)")
+        .title(crate::i18n::tr("Run on (systemd OnCalendar)"))
         .text("daily")
         .build();
     let group = adw::PreferencesGroup::builder()
-        .title("Schedule")
-        .description("Exports a systemd user timer that runs this job independently of Cascade.")
+        .title(crate::i18n::tr("Schedule"))
+        .description(crate::i18n::tr(
+            "Exports a systemd user timer that runs this job independently of Cascade.",
+        ))
         .build();
     group.add(&when);
 
@@ -29,13 +31,15 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
         .xalign(0.0)
         .wrap(true)
         .css_classes(vec!["dim-label".to_string()])
-        .label("Examples:  hourly · daily · weekly · *-*-* 02:00:00 · Mon *-*-* 09:00")
+        .label(crate::i18n::tr(
+            "Examples:  hourly · daily · weekly · *-*-* 02:00:00 · Mon *-*-* 09:00",
+        ))
         .build();
 
     let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
 
     let create = gtk::Button::builder()
-        .label("Create schedule")
+        .label(crate::i18n::tr("Create schedule"))
         .halign(gtk::Align::End)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
@@ -67,7 +71,7 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
         let bin_path = match tool_path(spec.tool) {
             Some(p) => p,
             None => {
-                status.set_label("✗ The required tool is not installed.");
+                status.set_label(&crate::i18n::tr("✗ The required tool is not installed."));
                 return;
             }
         };
@@ -80,7 +84,7 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
         };
         let on_calendar = when.text().trim().to_string();
         if on_calendar.is_empty() {
-            status.set_label("✗ Enter a schedule (e.g. daily).");
+            status.set_label(&crate::i18n::tr("✗ Enter a schedule (e.g. daily)."));
             return;
         }
 
@@ -99,7 +103,7 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
             return;
         }
 
-        status.set_label("Enabling the timer…");
+        status.set_label(&crate::i18n::tr("Enabling the timer…"));
         btn.set_sensitive(false);
 
         // daemon-reload, then enable --now the timer.

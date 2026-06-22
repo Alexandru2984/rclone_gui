@@ -27,7 +27,9 @@ impl HistoryView {
             .build();
 
         let empty = gtk::Label::builder()
-            .label("No runs yet — start a job to see its history here.")
+            .label(crate::i18n::tr(
+                "No runs yet — start a job to see its history here.",
+            ))
             .css_classes(vec!["dim-label".to_string()])
             .margin_top(24)
             .build();

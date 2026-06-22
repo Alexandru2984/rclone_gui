@@ -14,16 +14,20 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
     let providers = config::providers();
 
     let name = adw::EntryRow::builder()
-        .title("Remote name (e.g. gdrive)")
+        .title(crate::i18n::tr("Remote name (e.g. gdrive)"))
         .build();
-    let provider = adw::ComboRow::builder().title("Provider").build();
+    let provider = adw::ComboRow::builder()
+        .title(crate::i18n::tr("Provider"))
+        .build();
     let labels: Vec<&str> = providers.iter().map(|p| p.label).collect();
     provider.set_model(Some(&gtk::StringList::new(&labels)));
     let params = adw::EntryRow::builder()
-        .title("Parameters (key=value …)")
+        .title(crate::i18n::tr("Parameters (key=value …)"))
         .build();
 
-    let form = adw::PreferencesGroup::builder().title("New remote").build();
+    let form = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("New remote"))
+        .build();
     form.add(&name);
     form.add(&provider);
     form.add(&params);
@@ -52,7 +56,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
     update_hint();
 
     let create = gtk::Button::builder()
-        .label("Create remote")
+        .label(crate::i18n::tr("Create remote"))
         .halign(gtk::Align::End)
         .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
         .build();
@@ -84,7 +88,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
     toolbar.set_content(Some(&content));
 
     let dialog = adw::Dialog::new();
-    dialog.set_title("Add remote");
+    dialog.set_title(&crate::i18n::tr("Add remote"));
     dialog.set_content_width(580);
     dialog.set_content_height(540);
     dialog.set_child(Some(&toolbar));

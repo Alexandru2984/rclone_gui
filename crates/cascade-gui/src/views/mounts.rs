@@ -43,34 +43,42 @@ pub struct MountsView {
 
 impl MountsView {
     pub fn new(_ctx: Rc<AppCtx>, window: adw::ApplicationWindow) -> Self {
-        let remote_combo = adw::ComboRow::builder().title("Remote").build();
+        let remote_combo = adw::ComboRow::builder()
+            .title(crate::i18n::tr("Remote"))
+            .build();
         let subpath = adw::EntryRow::builder()
-            .title("Sub-path (optional)")
+            .title(crate::i18n::tr("Sub-path (optional)"))
             .build();
         let mountpoint = adw::EntryRow::builder()
-            .title("Mountpoint (an existing folder)")
+            .title(crate::i18n::tr("Mountpoint (an existing folder)"))
             .build();
 
         let create_group = adw::PreferencesGroup::builder()
-            .title("New mount")
-            .description("Mount a remote onto a local folder")
+            .title(crate::i18n::tr("New mount"))
+            .description(crate::i18n::tr("Mount a remote onto a local folder"))
             .build();
         create_group.add(&remote_combo);
         create_group.add(&subpath);
         create_group.add(&mountpoint);
 
-        let read_only = adw::SwitchRow::builder().title("Read-only").build();
+        let read_only = adw::SwitchRow::builder()
+            .title(crate::i18n::tr("Read-only"))
+            .build();
         let cache = adw::SwitchRow::builder()
-            .title("Writeback cache")
-            .subtitle("--vfs-cache-mode writes (recommended for editing files)")
+            .title(crate::i18n::tr("Writeback cache"))
+            .subtitle(crate::i18n::tr(
+                "--vfs-cache-mode writes (recommended for editing files)",
+            ))
             .active(true)
             .build();
-        let opts_group = adw::PreferencesGroup::builder().title("Options").build();
+        let opts_group = adw::PreferencesGroup::builder()
+            .title(crate::i18n::tr("Options"))
+            .build();
         opts_group.add(&read_only);
         opts_group.add(&cache);
 
         let mount_btn = gtk::Button::builder()
-            .label("Mount")
+            .label(crate::i18n::tr("Mount"))
             .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
             .build();
         let btn_box = gtk::Box::builder().halign(gtk::Align::End).build();
@@ -87,12 +95,12 @@ impl MountsView {
             .css_classes(vec!["boxed-list".to_string()])
             .build();
         let active_empty = gtk::Label::builder()
-            .label("No active mounts.")
+            .label(crate::i18n::tr("No active mounts."))
             .xalign(0.0)
             .css_classes(vec!["dim-label".to_string()])
             .build();
         let active_group = adw::PreferencesGroup::builder()
-            .title("Active mounts")
+            .title(crate::i18n::tr("Active mounts"))
             .build();
         active_group.add(&active_empty);
         active_group.add(&active_list);
@@ -170,7 +178,7 @@ impl MountsView {
 
     fn pick_mountpoint(&self) {
         let dialog = gtk::FileDialog::builder()
-            .title("Select mountpoint folder")
+            .title(crate::i18n::tr("Select mountpoint folder"))
             .build();
         let entry = self.mountpoint.clone();
         dialog.select_folder(Some(&self.window), gio::Cancellable::NONE, move |res| {
@@ -190,8 +198,9 @@ impl MountsView {
                 Ok(Ok(out)) => {
                     let remotes = browse::parse_remotes(&out);
                     if remotes.is_empty() {
-                        this.status
-                            .set_label("No rclone remotes configured. Run `rclone config`.");
+                        this.status.set_label(&crate::i18n::tr(
+                            "No rclone remotes configured. Run `rclone config`.",
+                        ));
                         return;
                     }
                     let names: Vec<&str> = remotes.iter().map(|s| s.as_str()).collect();
@@ -208,14 +217,15 @@ impl MountsView {
 
     fn do_mount(&self) {
         let Some(remote) = self.current_remote() else {
-            self.status.set_label("Select a remote first.");
+            self.status
+                .set_label(&crate::i18n::tr("Select a remote first."));
             return;
         };
         let path = browse::join(&remote, &self.subpath.text());
         let mp = self.mountpoint.text().trim().to_string();
         if mp.is_empty() || !Path::new(&mp).is_dir() {
             self.status
-                .set_label("Mountpoint must be an existing folder.");
+                .set_label(&crate::i18n::tr("Mountpoint must be an existing folder."));
             return;
         }
 
@@ -230,7 +240,7 @@ impl MountsView {
                 return;
             }
         };
-        self.status.set_label("");
+        self.status.set_label(&crate::i18n::tr(""));
 
         let handle = spawn("rclone", argv);
         let events = handle.events.clone();
@@ -240,11 +250,11 @@ impl MountsView {
 
         let row = adw::ActionRow::builder()
             .title(format!("{path}  →  {mp}"))
-            .subtitle("mounting…")
+            .subtitle(crate::i18n::tr("mounting…"))
             .build();
         row.add_prefix(&gtk::Image::from_icon_name("folder-remote-symbolic"));
         let unmount = gtk::Button::builder()
-            .label("Unmount")
+            .label(crate::i18n::tr("Unmount"))
             .valign(gtk::Align::Center)
             .css_classes(vec!["flat".to_string()])
             .build();
@@ -270,7 +280,7 @@ impl MountsView {
             let row = row.clone();
             glib::timeout_add_local_once(Duration::from_millis(1500), move || {
                 if !exited.get() {
-                    row.set_subtitle("mounted ✓");
+                    row.set_subtitle(&crate::i18n::tr("mounted ✓"));
                 }
             });
         }
@@ -284,7 +294,9 @@ impl MountsView {
                     ProcessEvent::Finished { success, .. } => {
                         exited.set(true);
                         if !success {
-                            row.set_subtitle("failed — see a terminal for details");
+                            row.set_subtitle(&crate::i18n::tr(
+                                "failed — see a terminal for details",
+                            ));
                         }
                         this.remove_mount(id);
                         break;
@@ -297,7 +309,7 @@ impl MountsView {
 
     fn unmount(&self, id: u64, mountpoint: &str) {
         if let Some(row) = self.row_of(id) {
-            row.set_subtitle("unmounting…");
+            row.set_subtitle(&crate::i18n::tr("unmounting…"));
         }
         let rx = capture(UNMOUNT_BIN, unmount_args(mountpoint));
         let this = self.clone();

@@ -9,14 +9,21 @@ use cascade_core::settings::Theme;
 use crate::ctx::{apply_theme, AppCtx};
 
 pub fn build(ctx: Rc<AppCtx>) -> gtk::Widget {
-    let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
+    let appearance = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Appearance"))
+        .build();
 
-    let theme_row = adw::ComboRow::builder().title("Theme").build();
-    theme_row.set_model(Some(&gtk::StringList::new(&[
-        "Follow system",
-        "Light",
-        "Dark",
-    ])));
+    let theme_row = adw::ComboRow::builder()
+        .title(crate::i18n::tr("Theme"))
+        .build();
+    let theme_labels = [
+        crate::i18n::tr("Follow system"),
+        crate::i18n::tr("Light"),
+        crate::i18n::tr("Dark"),
+    ];
+    theme_row.set_model(Some(&gtk::StringList::new(
+        &theme_labels.iter().map(String::as_str).collect::<Vec<_>>(),
+    )));
     theme_row.set_selected(match ctx.settings.borrow().theme {
         Theme::System => 0,
         Theme::Light => 1,
@@ -37,11 +44,15 @@ pub fn build(ctx: Rc<AppCtx>) -> gtk::Widget {
     }
     appearance.add(&theme_row);
 
-    let behavior = adw::PreferencesGroup::builder().title("Behavior").build();
+    let behavior = adw::PreferencesGroup::builder()
+        .title(crate::i18n::tr("Behavior"))
+        .build();
 
     let confirm_row = adw::SwitchRow::builder()
-        .title("Confirm destructive operations")
-        .subtitle("Ask before running sync-with-delete, delete, or purge")
+        .title(crate::i18n::tr("Confirm destructive operations"))
+        .subtitle(crate::i18n::tr(
+            "Ask before running sync-with-delete, delete, or purge",
+        ))
         .active(ctx.settings.borrow().confirm_destructive)
         .build();
     {
@@ -54,8 +65,8 @@ pub fn build(ctx: Rc<AppCtx>) -> gtk::Widget {
     behavior.add(&confirm_row);
 
     let parallel_row = adw::SpinRow::builder()
-        .title("Maximum parallel jobs")
-        .subtitle("Used by the job queue")
+        .title(crate::i18n::tr("Maximum parallel jobs"))
+        .subtitle(crate::i18n::tr("Used by the job queue"))
         .adjustment(&gtk::Adjustment::new(
             ctx.settings.borrow().max_parallel as f64,
             1.0,

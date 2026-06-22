@@ -47,27 +47,29 @@ impl RemoteBrowserView {
         window: adw::ApplicationWindow,
         on_pick: Rc<dyn Fn(PickTarget, String)>,
     ) -> Self {
-        let remote_combo = adw::ComboRow::builder().title("Remote").build();
+        let remote_combo = adw::ComboRow::builder()
+            .title(crate::i18n::tr("Remote"))
+            .build();
         let remote_group = adw::PreferencesGroup::builder()
-            .title("rclone remotes")
-            .description("Pick a configured remote to browse")
+            .title(crate::i18n::tr("rclone remotes"))
+            .description(crate::i18n::tr("Pick a configured remote to browse"))
             .build();
         remote_group.add(&remote_combo);
         let add_btn = gtk::Button::from_icon_name("list-add-symbolic");
         add_btn.add_css_class("flat");
-        add_btn.set_tooltip_text(Some("Add a new remote"));
+        add_btn.set_tooltip_text(Some(&crate::i18n::tr("Add a new remote")));
         let delete_btn = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_btn.add_css_class("flat");
-        delete_btn.set_tooltip_text(Some("Delete the selected remote"));
+        delete_btn.set_tooltip_text(Some(&crate::i18n::tr("Delete the selected remote")));
         let header_buttons = gtk::Box::builder().spacing(6).build();
         header_buttons.append(&add_btn);
         header_buttons.append(&delete_btn);
         remote_group.set_header_suffix(Some(&header_buttons));
 
         let up = gtk::Button::from_icon_name("go-up-symbolic");
-        up.set_tooltip_text(Some("Go up one folder"));
+        up.set_tooltip_text(Some(&crate::i18n::tr("Go up one folder")));
         let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
-        refresh.set_tooltip_text(Some("Reload"));
+        refresh.set_tooltip_text(Some(&crate::i18n::tr("Reload")));
         let path_label = gtk::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -96,11 +98,11 @@ impl RemoteBrowserView {
             .build();
 
         let use_src = gtk::Button::builder()
-            .label("Use as Source")
+            .label(crate::i18n::tr("Use as Source"))
             .css_classes(vec!["pill".to_string(), "suggested-action".to_string()])
             .build();
         let use_dst = gtk::Button::builder()
-            .label("Use as Destination")
+            .label(crate::i18n::tr("Use as Destination"))
             .css_classes(vec!["pill".to_string()])
             .build();
         let pick = gtk::Box::builder()
@@ -200,18 +202,20 @@ impl RemoteBrowserView {
 
     fn delete_current(&self) {
         let Some(remote) = self.current_remote() else {
-            self.status.set_label("Select a remote to delete.");
+            self.status
+                .set_label(&crate::i18n::tr("Select a remote to delete."));
             return;
         };
         let name = remote.trim_end_matches(':').to_string();
 
-        let dialog = adw::AlertDialog::new(
-            Some("Delete remote"),
-            Some(&format!(
-                "Remove the rclone remote “{name}” from your configuration?\n\nThis only removes the connection — it does not delete any files on the remote."
-            )),
-        );
-        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+        let body = crate::i18n::tr(
+            "Remove the rclone remote “%s” from your configuration?\n\nThis only removes the connection — it does not delete any files on the remote.",
+        )
+        .replace("%s", &name);
+        let cancel_l = crate::i18n::tr("Cancel");
+        let delete_l = crate::i18n::tr("Delete");
+        let dialog = adw::AlertDialog::new(Some(&crate::i18n::tr("Delete remote")), Some(&body));
+        dialog.add_responses(&[("cancel", cancel_l.as_str()), ("delete", delete_l.as_str())]);
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
@@ -242,7 +246,7 @@ impl RemoteBrowserView {
 
     fn load_remotes(&self) {
         self.status.set_visible(true);
-        self.status.set_label("Loading remotes…");
+        self.status.set_label(&crate::i18n::tr("Loading remotes…"));
         let rx = capture("rclone", browse::listremotes_args());
         let this = self.clone();
         glib::spawn_future_local(async move {
@@ -253,9 +257,10 @@ impl RemoteBrowserView {
                         this.remotes.borrow_mut().clear();
                         this.remote_combo.set_model(gtk::gio::ListModel::NONE);
                         this.list.remove_all();
-                        this.path_label.set_label("");
-                        this.status
-                            .set_label("No rclone remotes configured. Use “+” to add one.");
+                        this.path_label.set_label(&crate::i18n::tr(""));
+                        this.status.set_label(&crate::i18n::tr(
+                            "No rclone remotes configured. Use “+” to add one.",
+                        ));
                         return;
                     }
                     let names: Vec<&str> = remotes.iter().map(|s| s.as_str()).collect();
@@ -294,14 +299,14 @@ impl RemoteBrowserView {
                         .set_label(&format!("Could not read listing: {e}")),
                 },
                 Ok(Err(e)) => this.status.set_label(&e),
-                Err(_) => this.status.set_label("Listing cancelled"),
+                Err(_) => this.status.set_label(&crate::i18n::tr("Listing cancelled")),
             }
         });
     }
 
     fn populate(&self, entries: Vec<browse::Entry>) {
         if entries.is_empty() {
-            self.status.set_label("Empty folder");
+            self.status.set_label(&crate::i18n::tr("Empty folder"));
             self.status.set_visible(true);
             return;
         }
