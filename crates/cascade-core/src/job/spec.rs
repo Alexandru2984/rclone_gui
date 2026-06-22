@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::rclone::command::{self as rclone_cmd, RcloneOp, RcloneOptions};
 use crate::rsync::command::{build_args as rsync_args, RsyncOptions};
 use crate::security::destructive::{classify, Operation, RiskLevel};
+use crate::security::sanitize;
 use crate::Tool;
 
 /// The high-level operation, independent of which tool runs it.
@@ -158,6 +159,13 @@ impl JobSpec {
         let argv = self.build_argv()?;
         Ok(rclone_cmd::preview(self.binary(), &argv))
     }
+
+    /// Like [`preview`], but with secrets redacted. Use this for anything that
+    /// is **persisted or shown after the fact** (history, on-disk logs,
+    /// clipboard) so credentials embedded in paths or flags never leak at rest.
+    pub fn preview_sanitized(&self) -> Result<String> {
+        Ok(sanitize::redact(&self.preview()?))
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +273,19 @@ mod tests {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
         s.dry_run = true;
         assert!(s.build_argv().unwrap().contains(&"-n".to_string()));
+    }
+
+    #[test]
+    fn preview_sanitized_redacts_secrets_in_flags() {
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        s.options.extra_flags = vec!["--sftp-pass".into(), "hunter2".into()];
+        let raw = s.preview().unwrap();
+        let safe = s.preview_sanitized().unwrap();
+        assert!(raw.contains("hunter2"), "raw preview keeps the secret");
+        assert!(
+            !safe.contains("hunter2"),
+            "sanitized preview must redact it"
+        );
     }
 
     #[test]

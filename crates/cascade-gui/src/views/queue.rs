@@ -244,7 +244,8 @@ impl QueueView {
                 return;
             }
         };
-        let preview = spec.preview().unwrap_or_default();
+        // Sanitized: persisted to the DB and written to the on-disk log.
+        let preview = spec.preview_sanitized().unwrap_or_default();
 
         let options_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".into());
         let job_id = match self.ctx.store.insert_job(

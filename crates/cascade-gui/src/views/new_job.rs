@@ -653,7 +653,9 @@ impl Inputs {
                 return;
             }
         };
-        let preview = spec.preview().unwrap_or_default();
+        // Sanitized: this value is persisted (DB), written to the log file, and
+        // shown later in History/Job Details, so it must not carry secrets.
+        let preview = spec.preview_sanitized().unwrap_or_default();
 
         // Persist the job and the run we are about to start.
         let options_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".into());
