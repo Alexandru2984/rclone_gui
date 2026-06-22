@@ -5,12 +5,14 @@
 
 pub mod browse;
 pub mod command;
+pub mod config;
 pub mod detect;
 pub mod mount;
 pub mod rcd;
 
 pub use browse::Entry;
 pub use command::{preview, RcloneOp, RcloneOptions};
+pub use config::Provider;
 pub use detect::{detect, ToolInfo};
 pub use mount::MountOptions;
 pub use rcd::Rcd;

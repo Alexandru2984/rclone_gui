@@ -13,6 +13,7 @@ use cascade_core::process::capture;
 use cascade_core::rclone::browse;
 
 use crate::ctx::AppCtx;
+use crate::views::add_remote;
 
 /// Where a picked path should go in the New Job form.
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +30,7 @@ struct State {
 #[derive(Clone)]
 pub struct RemoteBrowserView {
     root: gtk::Widget,
+    window: adw::ApplicationWindow,
     remote_combo: adw::ComboRow,
     path_label: gtk::Label,
     list: gtk::ListBox,
@@ -39,13 +41,21 @@ pub struct RemoteBrowserView {
 }
 
 impl RemoteBrowserView {
-    pub fn new(_ctx: Rc<AppCtx>, on_pick: Rc<dyn Fn(PickTarget, String)>) -> Self {
+    pub fn new(
+        _ctx: Rc<AppCtx>,
+        window: adw::ApplicationWindow,
+        on_pick: Rc<dyn Fn(PickTarget, String)>,
+    ) -> Self {
         let remote_combo = adw::ComboRow::builder().title("Remote").build();
         let remote_group = adw::PreferencesGroup::builder()
             .title("rclone remotes")
             .description("Pick a configured remote to browse")
             .build();
         remote_group.add(&remote_combo);
+        let add_btn = gtk::Button::from_icon_name("list-add-symbolic");
+        add_btn.add_css_class("flat");
+        add_btn.set_tooltip_text(Some("Add a new remote"));
+        remote_group.set_header_suffix(Some(&add_btn));
 
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.set_tooltip_text(Some("Go up one folder"));
@@ -106,6 +116,7 @@ impl RemoteBrowserView {
 
         let view = Self {
             root: column.upcast(),
+            window,
             remote_combo,
             path_label,
             list,
@@ -134,6 +145,14 @@ impl RemoteBrowserView {
         {
             let this = view.clone();
             refresh.connect_clicked(move |_| this.reload());
+        }
+        {
+            let this = view.clone();
+            add_btn.connect_clicked(move |_| {
+                let reload = this.clone();
+                let on_done: Rc<dyn Fn()> = Rc::new(move || reload.load_remotes());
+                add_remote::present(&this.window, on_done);
+            });
         }
         {
             let this = view.clone();

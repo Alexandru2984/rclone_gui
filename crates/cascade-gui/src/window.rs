@@ -75,7 +75,7 @@ impl MainWindow {
                 stack.set_visible_child_name("new-job");
             })
         };
-        let remotes = RemoteBrowserView::new(ctx.clone(), on_pick);
+        let remotes = RemoteBrowserView::new(ctx.clone(), window.clone(), on_pick);
         let mounts = MountsView::new(ctx.clone(), window.clone());
 
         stack.add_titled_with_icon(
