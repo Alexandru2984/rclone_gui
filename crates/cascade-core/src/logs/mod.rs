@@ -7,8 +7,40 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
+
+/// Delete `*.log` files in `dir` whose modification time is before `older_than`.
+/// Returns how many were removed. Best-effort: I/O errors on individual files
+/// are ignored.
+pub fn prune_logs(dir: &Path, older_than: SystemTime) -> std::io::Result<usize> {
+    let mut removed = 0;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(0), // no log dir yet
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("log") {
+            continue;
+        }
+        if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+            if modified < older_than && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Prune `*.log` files older than `days` (from now).
+pub fn prune_logs_older_than_days(dir: &Path, days: u64) -> std::io::Result<usize> {
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(days.saturating_mul(86_400)))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    prune_logs(dir, cutoff)
+}
 
 /// Running tally of log severities for a single run.
 #[derive(Debug, Default, Clone, Serialize)]
@@ -107,6 +139,26 @@ mod tests {
         let contents = std::fs::read_to_string(w.path()).unwrap();
         assert!(contents.contains("starting copy"));
         assert_eq!(contents.lines().count(), 4);
+    }
+
+    #[test]
+    fn prune_removes_only_old_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        LogWriter::create(dir.path(), 1).unwrap();
+        LogWriter::create(dir.path(), 2).unwrap();
+        std::fs::write(dir.path().join("keep.txt"), b"not a log").unwrap();
+
+        // Cutoff in the future → both .log files are "old" and removed; .txt kept.
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        assert_eq!(prune_logs(dir.path(), future).unwrap(), 2);
+        assert!(dir.path().join("keep.txt").exists());
+        assert!(!dir.path().join("run-1.log").exists());
+
+        // Nothing left, and a past cutoff removes nothing.
+        LogWriter::create(dir.path(), 3).unwrap();
+        let past = SystemTime::now() - Duration::from_secs(3600);
+        assert_eq!(prune_logs(dir.path(), past).unwrap(), 0);
+        assert!(dir.path().join("run-3.log").exists());
     }
 
     #[cfg(unix)]

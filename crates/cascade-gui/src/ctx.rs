@@ -36,6 +36,8 @@ impl AppCtx {
         if let Err(e) = store.fail_interrupted_runs() {
             eprintln!("warning: could not clean up interrupted runs: {e}");
         }
+        // Prune log files older than 30 days.
+        let _ = cascade_core::logs::prune_logs_older_than_days(&paths.log_dir, 30);
         let settings = AppSettings::load(&store);
         Rc::new(Self {
             store: Rc::new(store),
