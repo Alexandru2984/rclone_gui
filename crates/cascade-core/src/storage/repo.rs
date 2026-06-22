@@ -6,7 +6,7 @@
 
 use rusqlite::params;
 
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::job::JobSpec;
 
 use super::Store;
@@ -128,7 +128,17 @@ impl Store {
     }
 
     /// Save (or update by name) a reusable profile from a [`JobSpec`].
+    ///
+    /// Refuses to persist a spec that embeds a credential — Cascade never stores
+    /// secrets; configure an rclone remote and reference it as `remote:path`.
     pub fn save_profile(&self, spec: &JobSpec) -> Result<i64> {
+        if spec.contains_secret() {
+            return Err(CoreError::InvalidCommand(
+                "this job embeds a credential — configure an rclone remote (rclone config) \
+                 and use it as 'remote:path' instead of saving the secret"
+                    .into(),
+            ));
+        }
         let options_json = serde_json::to_string(spec)?;
         let kind = match spec.tool {
             crate::Tool::Rclone => "rclone",
@@ -311,6 +321,29 @@ mod tests {
 
         // Idempotent: nothing left to fix.
         assert_eq!(store.fail_interrupted_runs().unwrap(), 0);
+    }
+
+    #[test]
+    fn save_profile_refuses_embedded_secrets() {
+        use crate::job::OpKind;
+        use crate::Tool;
+
+        let store = Store::open_in_memory().unwrap();
+        let spec = JobSpec {
+            name: "leaky".into(),
+            tool: Tool::Rsync,
+            op: OpKind::Copy,
+            source: "/src/".into(),
+            destination: "/dst/".into(),
+            dry_run: false,
+            delete: false,
+            options: crate::job::AdvancedOptions {
+                extra_flags: vec!["--sftp-pass".into(), "hunter2".into()],
+                ..Default::default()
+            },
+        };
+        assert!(store.save_profile(&spec).is_err());
+        assert!(store.list_profiles().unwrap().is_empty());
     }
 
     #[test]

@@ -188,6 +188,20 @@ impl JobSpec {
     pub fn preview_sanitized(&self) -> Result<String> {
         Ok(sanitize::redact(&self.preview()?))
     }
+
+    /// Whether this spec embeds something the sanitizer recognizes as a secret
+    /// (a password in a connection string, a `--*-pass` flag, a credential URL).
+    /// Used to refuse persisting secrets into a profile — Cascade is never a
+    /// credential store; users should configure an rclone remote instead.
+    pub fn contains_secret(&self) -> bool {
+        let joined = format!(
+            "{} {} {}",
+            self.source,
+            self.destination,
+            self.options.extra_flags.join(" ")
+        );
+        sanitize::redact(&joined) != joined
+    }
 }
 
 #[cfg(test)]
@@ -319,6 +333,18 @@ mod tests {
         let mut s = spec(Tool::Rclone, OpKind::Copy);
         s.options.extra_flags = vec!["--fast-list".into(), "--transfers".into(), "8".into()];
         assert_eq!(s.risk(), RiskLevel::Caution);
+    }
+
+    #[test]
+    fn contains_secret_detects_embedded_credentials() {
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        assert!(!s.contains_secret());
+        s.options.extra_flags = vec!["--sftp-pass".into(), "hunter2".into()];
+        assert!(s.contains_secret());
+
+        let mut u = spec(Tool::Rclone, OpKind::Copy);
+        u.source = "https://alice:s3cr3t@example.com".into();
+        assert!(u.contains_secret());
     }
 
     #[test]

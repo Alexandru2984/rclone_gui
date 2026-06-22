@@ -1,8 +1,12 @@
 # D. SQLite data model
 
 `rusqlite` with bundled SQLite, WAL mode. Forward-only migrations keyed by `schema_version`.
-**Secrets are never stored here** — tokens/passwords/SSH passphrases go to the Secret Service
-(keyring); this DB only stores a *reference* (key name) to them.
+
+**Cascade never stores secrets — anywhere.** Credentials (cloud tokens, SSH/SFTP
+passwords) are owned and encrypted by rclone's own config; we only invoke rclone and
+reference remotes as `remote:path`. To enforce this, `save_profile` **refuses** any spec
+whose paths or flags embed a credential, directing the user to `rclone config` instead.
+There is deliberately no secret/keyring column.
 
 ## Tables
 
@@ -28,8 +32,7 @@ Reusable, named operation templates (the app's own profiles — not rclone's nat
 | operation | TEXT NOT NULL | copy/sync/move/check/backup/mirror… |
 | source | TEXT NOT NULL | |
 | destination | TEXT NOT NULL | |
-| options_json | TEXT NOT NULL | serialized options struct |
-| secret_ref | TEXT | keyring key name, nullable |
+| options_json | TEXT NOT NULL | serialized options struct (secret-free; save is refused otherwise) |
 | created_at | INTEGER NOT NULL | unix epoch |
 | updated_at | INTEGER NOT NULL | |
 

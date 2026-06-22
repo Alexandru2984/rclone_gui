@@ -20,7 +20,6 @@ pub const MIGRATIONS: &[&str] = &[
         source        TEXT NOT NULL,
         destination   TEXT NOT NULL,
         options_json  TEXT NOT NULL,
-        secret_ref    TEXT,
         created_at    INTEGER NOT NULL,
         updated_at    INTEGER NOT NULL
     );
