@@ -55,8 +55,8 @@ pub struct RunHandle {
 }
 
 impl RunHandle {
-    /// Request cancellation. The child is sent SIGKILL on the runtime thread.
-    /// Safe to call more than once.
+    /// Request cancellation. The child is asked to stop gracefully (SIGTERM,
+    /// then SIGKILL after a timeout). Safe to call more than once.
     pub fn cancel(&self) {
         let _ = self.cancel.try_send(());
     }
@@ -204,11 +204,8 @@ async fn drive(
         tokio::select! {
             status = child.wait() => status.map_err(|e| e.to_string()),
             _ = cancel_rx.recv() => {
-                let _ = child.start_kill();
-                let status = child.wait().await.map_err(|e| e.to_string());
-                // Mark as an explicit cancellation regardless of the wait result.
                 let _ = ev.send(ProcessEvent::Error("cancelled by user".into())).await;
-                status.map(|_| std::process::ExitStatus::default_failed())
+                graceful_terminate(&mut child).await
             }
         }
     };
@@ -309,25 +306,24 @@ async fn emit_line(
     let _ = ev.send(event).await;
 }
 
-/// Helper to construct a "failed" exit status portably for the cancel path.
-trait ExitStatusExt {
-    fn default_failed() -> std::process::ExitStatus;
-}
-impl ExitStatusExt for std::process::ExitStatus {
-    fn default_failed() -> std::process::ExitStatus {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt as _;
-            std::process::ExitStatus::from_raw(9) // SIGKILL
+/// Cancel a running child gracefully: send SIGTERM, wait up to 5 seconds for it
+/// to clean up (partial temp files, FUSE locks), then SIGKILL if it ignores us.
+/// Returns the child's real exit status — no fabricated value.
+async fn graceful_terminate(
+    child: &mut tokio::process::Child,
+) -> std::result::Result<std::process::ExitStatus, String> {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // SAFETY: `pid` is our own child; sending SIGTERM is always sound.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
-        #[cfg(not(unix))]
-        {
-            // Fallback: emulate a non-zero exit on non-Unix.
-            std::process::Command::new("cmd")
-                .arg("/c")
-                .arg("exit 1")
-                .status()
-                .unwrap()
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
+        Ok(status) => status.map_err(|e| e.to_string()),
+        Err(_) => {
+            let _ = child.start_kill();
+            child.wait().await.map_err(|e| e.to_string())
         }
     }
 }
@@ -335,6 +331,35 @@ impl ExitStatusExt for std::process::ExitStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancel_terminates_a_running_process() {
+        // `sleep 30` exits promptly on SIGTERM; cancelling must finish it well
+        // within the 5s SIGKILL fallback (proving graceful termination works).
+        let h = spawn("sleep", vec!["30".into()]);
+        // Wait until it has started.
+        loop {
+            match h.events.recv().await {
+                Ok(ProcessEvent::Started { .. }) => break,
+                Ok(_) => {}
+                Err(_) => panic!("channel closed before start"),
+            }
+        }
+        h.cancel();
+        let finished = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+            while let Ok(ev) = h.events.recv().await {
+                if let ProcessEvent::Finished { success, .. } = ev {
+                    return success;
+                }
+            }
+            true
+        })
+        .await;
+        assert!(
+            matches!(finished, Ok(false)),
+            "cancel should finish the job (unsuccessfully) fast"
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn long_line_is_capped_not_unbounded() {
