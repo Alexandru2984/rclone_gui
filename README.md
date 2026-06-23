@@ -168,8 +168,14 @@ It is a template: fill the two `TODO` checksums and generate `cargo-sources.json
 from `Cargo.lock` (see the manifest header), then `flatpak-builder`.
 
 ### Screenshots
-Not committed yet. To capture on GNOME: run `cascade`, then use the system
-screenshot tool (Print Screen) and drop images in `docs/screenshots/`.
+Capture them with [`docs/capture-screenshots.sh`](docs/capture-screenshots.sh)
+(leave only Cascade visible — it grabs the whole screen), which writes to
+`docs/screenshots/`. Then reference them in the section near the top of this
+file, e.g.:
+
+```markdown
+![New Job](docs/screenshots/new-job.png)
+```
 
 ---
 
