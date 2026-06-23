@@ -31,3 +31,42 @@ jobs:
         with:
           files: target/debian/*.deb
           fail_on_unmatched_files: true
+
+  appimage:
+    name: build AppImage
+    runs-on: ubuntu-latest
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev librsvg2-dev \
+            libglib2.0-bin desktop-file-utils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build -p cascade-gui --release
+      - name: Fetch linuxdeploy
+        run: |
+          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
+          curl -fsSL -o linuxdeploy "$base/linuxdeploy-x86_64.AppImage"
+          curl -fsSL -o linuxdeploy-plugin-gtk.sh \
+            https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x linuxdeploy linuxdeploy-plugin-gtk.sh
+      - name: Build AppImage
+        env:
+          DEPLOY_GTK_VERSION: "4"
+        run: |
+          ./linuxdeploy --appdir AppDir \
+            --executable target/release/cascade \
+            --desktop-file packaging/io.github.alexmihai.Cascade.desktop \
+            --icon-file packaging/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg \
+            --plugin gtk \
+            --output appimage
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.AppImage"
+          fail_on_unmatched_files: true

@@ -44,6 +44,18 @@ jobs:
         run: cargo clippy -p cascade-gui --all-targets -- -D warnings
       - name: build (gui)
         run: cargo build -p cascade-gui --release
+      - name: Headless smoke test
+        run: |
+          sudo apt-get install -y xvfb dbus-x11 gsettings-desktop-schemas
+          xvfb-run -a dbus-run-session -- bash -c '
+            target/release/cascade & pid=$!
+            sleep 6
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "app started and is still running"; kill "$pid"
+            else
+              echo "app exited early"; exit 1
+            fi
+          '
 
   packaging:
     name: packaging (desktop + appstream)
