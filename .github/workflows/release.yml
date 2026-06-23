@@ -1,0 +1,33 @@
+name: Release
+
+# On a version tag, build the Debian package and attach it to the GitHub
+# release for that tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    name: build .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+      - name: Build the package
+        run: cargo deb -p cascade-gui
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/*.deb
+          fail_on_unmatched_files: true
