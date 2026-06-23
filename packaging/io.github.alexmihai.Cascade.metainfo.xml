@@ -26,8 +26,8 @@
 
   <launchable type="desktop-id">io.github.alexmihai.Cascade.desktop</launchable>
 
-  <url type="homepage">https://github.com/alexmihai/cascade</url>
-  <url type="bugtracker">https://github.com/alexmihai/cascade/issues</url>
+  <url type="homepage">https://github.com/Alexandru2984/rclone_gui</url>
+  <url type="bugtracker">https://github.com/Alexandru2984/rclone_gui/issues</url>
 
   <!-- Works identically on Wayland and X11 (GTK4/GDK). -->
   <supports>
