@@ -1,5 +1,9 @@
 # Cascade
 
+[![CI](https://github.com/Alexandru2984/rclone_gui/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexandru2984/rclone_gui/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Alexandru2984/rclone_gui?sort=semver)](https://github.com/Alexandru2984/rclone_gui/releases)
+
 > A native, lightweight **GTK4 / libadwaita** desktop GUI for **rclone** and **rsync** on Linux.
 > No Electron, no web stack — a real native app in Rust.
 
