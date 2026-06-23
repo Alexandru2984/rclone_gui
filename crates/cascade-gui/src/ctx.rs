@@ -8,6 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use tracing::warn;
+
 use cascade_core::config::Paths;
 use cascade_core::settings::{AppSettings, Theme};
 use cascade_core::storage::Store;
@@ -23,18 +25,18 @@ impl AppCtx {
     pub fn new() -> Rc<Self> {
         let paths = Paths::resolve();
         if let Err(e) = paths.ensure() {
-            eprintln!("warning: could not create app directories: {e}");
+            warn!("could not create app directories: {e}");
         }
         let store = match Store::open(&paths.db_path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("warning: opening database failed ({e}); using in-memory store");
+                warn!("opening database failed ({e}); using an in-memory store");
                 Store::open_in_memory().expect("in-memory store")
             }
         };
         // Clean up runs orphaned by a previous crash/hard exit.
         if let Err(e) = store.fail_interrupted_runs() {
-            eprintln!("warning: could not clean up interrupted runs: {e}");
+            warn!("could not clean up interrupted runs: {e}");
         }
         // Prune log files older than 30 days.
         let _ = cascade_core::logs::prune_logs_older_than_days(&paths.log_dir, 30);
@@ -49,7 +51,7 @@ impl AppCtx {
     /// Persist the current settings.
     pub fn save_settings(&self) {
         if let Err(e) = self.settings.borrow().save(&self.store) {
-            eprintln!("warning: could not save settings: {e}");
+            warn!("could not save settings: {e}");
         }
     }
 }

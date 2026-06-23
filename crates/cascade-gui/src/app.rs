@@ -9,6 +9,7 @@ use crate::ctx::{apply_theme, AppCtx};
 use crate::window::MainWindow;
 
 pub fn run() -> glib::ExitCode {
+    init_logging();
     crate::i18n::init();
     let ctx = AppCtx::new();
 
@@ -28,4 +29,16 @@ pub fn run() -> glib::ExitCode {
 
     // Do not forward process argv to GTK; we have no GTK CLI options.
     app.run_with_args::<&str>(&[])
+}
+
+/// Initialize structured logging. Override with `RUST_LOG`, e.g.
+/// `RUST_LOG=cascade_core=debug`.
+fn init_logging() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("warn,cascade_gui=info,cascade_core=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
 }
