@@ -1,0 +1,76 @@
+# Flatpak manifest for Cascade.
+#
+# NOT verified by build here — finish the two marked TODOs, then build:
+#   pip install flatpak-cargo-generator   # or use the upstream script
+#   python flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+#   flatpak-builder --user --install --force-clean build-dir \
+#       packaging/flatpak/io.github.alexmihai.Cascade.yml
+#
+# rclone and rsync are bundled so the sandboxed app never needs host binaries.
+app-id: io.github.alexmihai.Cascade
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: cascade
+
+finish-args:
+  # Run identically on Wayland and X11.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # rclone/rsync need network and file access.
+  - --share=network
+  - --filesystem=home
+  # Desktop notifications and (future) Secret Service.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/cascade/cargo
+
+modules:
+  # Bundled rsync.
+  - name: rsync
+    buildsystem: autotools
+    config-opts:
+      - --disable-debug
+    sources:
+      - type: archive
+        url: https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz
+        sha256: TODO_FILL_RSYNC_SHA256
+
+  # Bundled rclone (official static binary).
+  - name: rclone
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 rclone /app/bin/rclone
+    sources:
+      - type: archive
+        url: https://downloads.rclone.org/v1.69.0/rclone-v1.69.0-linux-amd64.zip
+        sha256: TODO_FILL_RCLONE_SHA256
+        strip-components: 1
+
+  # Cascade itself (offline cargo build using the vendored cargo-sources.json).
+  - name: cascade
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo build --release --offline -p cascade-gui
+      - install -Dm755 target/release/cascade /app/bin/cascade
+      - install -Dm644 packaging/io.github.alexmihai.Cascade.desktop
+        /app/share/applications/io.github.alexmihai.Cascade.desktop
+      - install -Dm644 packaging/io.github.alexmihai.Cascade.metainfo.xml
+        /app/share/metainfo/io.github.alexmihai.Cascade.metainfo.xml
+      - install -Dm644 packaging/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg
+        /app/share/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg
+    sources:
+      - type: dir
+        path: ../..
+      # Generated from Cargo.lock — see the header comment.
+      - cargo-sources.json

@@ -156,8 +156,12 @@ linuxdeploy --appdir AppDir \
   --icon-file packaging/icons/hicolor/scalable/apps/io.github.alexmihai.Cascade.svg \
   --plugin gtk --output appimage
 ```
-Flatpak is intentionally not the primary target: sandboxed apps cannot freely
-spawn host `rclone`/`rsync` without `flatpak-spawn --host` or bundling them.
+### Flatpak
+A manifest is provided at
+[`packaging/flatpak/`](packaging/flatpak/) that **bundles `rclone` and `rsync`**
+inside the sandbox (so it never needs host binaries) and grants Wayland + X11.
+It is a template: fill the two `TODO` checksums and generate `cargo-sources.json`
+from `Cargo.lock` (see the manifest header), then `flatpak-builder`.
 
 ### Screenshots
 Not committed yet. To capture on GNOME: run `cascade`, then use the system
