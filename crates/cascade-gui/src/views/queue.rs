@@ -346,7 +346,7 @@ impl QueueView {
                     &w.counts_json(),
                 );
             }
-            row.set_subtitle(status);
+            row.set_subtitle(&crate::i18n::tr(status));
             cancel.set_visible(false);
             this.mark_done(id);
             this.queue.borrow_mut().complete();

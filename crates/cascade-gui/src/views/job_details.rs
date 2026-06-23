@@ -19,7 +19,10 @@ pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord
 
     // --- Metadata ---
     let info = adw::PreferencesGroup::new();
-    info.add(&detail_row(&crate::i18n::tr("Status"), &run.status));
+    info.add(&detail_row(
+        &crate::i18n::tr("Status"),
+        &crate::i18n::tr(&run.status),
+    ));
     info.add(&detail_row(
         "Operation",
         &format!(

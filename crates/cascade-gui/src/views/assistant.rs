@@ -23,8 +23,8 @@ pub fn build(window: adw::ApplicationWindow, on_open: Rc<dyn Fn(JobSpec)>) -> gt
 
     for sc in builtin_scenarios() {
         let row = adw::ActionRow::builder()
-            .title(sc.title)
-            .subtitle(sc.description)
+            .title(crate::i18n::tr(sc.title))
+            .subtitle(crate::i18n::tr(sc.description))
             .build();
         row.add_suffix(&risk_tag(sc.risk()));
         row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
@@ -73,7 +73,7 @@ fn detail_page(
 
     let paths = adw::PreferencesGroup::builder()
         .title(crate::i18n::tr("Paths"))
-        .description(sc.description)
+        .description(crate::i18n::tr(sc.description))
         .build();
     paths.add(&source);
     paths.add(&dest);
@@ -83,7 +83,7 @@ fn detail_page(
         let note = gtk::Label::builder()
             .xalign(0.0)
             .wrap(true)
-            .label(sc.note)
+            .label(crate::i18n::tr(sc.note))
             .build();
         note.add_css_class(match sc.risk() {
             RiskLevel::Destructive => "error",
@@ -121,7 +121,7 @@ fn detail_page(
     btn_row.append(&open);
     column.append(&btn_row);
 
-    adw::NavigationPage::new(&column, sc.title)
+    adw::NavigationPage::new(&column, &crate::i18n::tr(sc.title))
 }
 
 fn add_browse(row: &adw::EntryRow, window: &adw::ApplicationWindow) {
@@ -150,9 +150,9 @@ fn add_browse(row: &adw::EntryRow, window: &adw::ApplicationWindow) {
 
 fn risk_tag(risk: RiskLevel) -> gtk::Label {
     let (text, css) = match risk {
-        RiskLevel::Safe => ("safe", "success"),
-        RiskLevel::Caution => ("caution", "warning"),
-        RiskLevel::Destructive => ("destructive", "error"),
+        RiskLevel::Safe => (crate::i18n::tr("safe"), "success"),
+        RiskLevel::Caution => (crate::i18n::tr("caution"), "warning"),
+        RiskLevel::Destructive => (crate::i18n::tr("destructive"), "error"),
     };
     gtk::Label::builder()
         .label(text)

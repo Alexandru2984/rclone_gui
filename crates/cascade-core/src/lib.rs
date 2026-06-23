@@ -23,6 +23,14 @@ pub mod storage;
 
 pub use error::{CoreError, Result};
 
+/// No-op translation **marker**. Returns its argument unchanged, but lets
+/// `xgettext --keyword=n` extract user-facing literals that live in this
+/// GTK-free crate (scenario titles, provider hints…). The GUI translates them
+/// at display time via gettext; core itself never depends on gettext.
+pub const fn n(s: &'static str) -> &'static str {
+    s
+}
+
 /// Tools Cascade orchestrates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

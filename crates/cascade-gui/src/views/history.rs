@@ -122,7 +122,7 @@ fn status_pill(status: &str) -> gtk::Label {
         _ => "dim-label",
     };
     gtk::Label::builder()
-        .label(status)
+        .label(crate::i18n::tr(status))
         .css_classes(vec!["caption-heading".to_string(), css.to_string()])
         .build()
 }

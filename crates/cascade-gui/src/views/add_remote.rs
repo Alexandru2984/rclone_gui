@@ -19,8 +19,10 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
     let provider = adw::ComboRow::builder()
         .title(crate::i18n::tr("Provider"))
         .build();
-    let labels: Vec<&str> = providers.iter().map(|p| p.label).collect();
-    provider.set_model(Some(&gtk::StringList::new(&labels)));
+    let labels: Vec<String> = providers.iter().map(|p| crate::i18n::tr(p.label)).collect();
+    provider.set_model(Some(&gtk::StringList::new(
+        &labels.iter().map(String::as_str).collect::<Vec<_>>(),
+    )));
     let params = adw::EntryRow::builder()
         .title(crate::i18n::tr("Parameters (key=value …)"))
         .build();
@@ -45,7 +47,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
         let providers = providers.clone();
         Rc::new(move || {
             if let Some(p) = providers.get(provider.selected() as usize) {
-                hint.set_label(p.hint);
+                hint.set_label(&crate::i18n::tr(p.hint));
             }
         })
     };

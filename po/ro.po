@@ -151,3 +151,78 @@ msgstr "Rulează oricum"
 
 msgid "Dry-run first"
 msgstr "Întâi simulare"
+
+msgid "Back up photos"
+msgstr "Salvează pozele"
+
+msgid "Copy a photo folder to another disk or location. Never deletes."
+msgstr "Copiază un folder de poze pe alt disc sau locație. Nu șterge niciodată."
+
+msgid "Back up programming projects"
+msgstr "Salvează proiectele de programare"
+
+msgid "Copy your code projects to a backup location. Never deletes."
+msgstr "Copiază proiectele de cod într-o locație de backup. Nu șterge niciodată."
+
+msgid "Tip: in Advanced mode you can exclude node_modules, target/, etc."
+msgstr "Sfat: în modul Advanced poți exclude node_modules, target/, etc."
+
+msgid "Back up a personal folder"
+msgstr "Salvează un folder personal"
+
+msgid "Copy a folder such as Documents to a backup location."
+msgstr "Copiază un folder precum Documente într-o locație de backup."
+
+msgid "Back up to Google Drive"
+msgstr "Salvează pe Google Drive"
+
+msgid "Copy a local folder to a Google Drive remote. Never deletes."
+msgstr "Copiază un folder local pe un remote Google Drive. Nu șterge niciodată."
+
+msgid "Requires a configured rclone remote (e.g. gdrive:)."
+msgstr "Necesită un remote rclone configurat (ex. gdrive:)."
+
+msgid "Back up to a VPS over SSH"
+msgstr "Salvează pe un VPS prin SSH"
+
+msgid "Copy a local folder to a server via rsync over SSH."
+msgstr "Copiază un folder local pe un server prin rsync peste SSH."
+
+msgid "Sync two local folders (mirror)"
+msgstr "Sincronizează două foldere locale (oglindă)"
+
+msgid "Make the destination identical to the source."
+msgstr "Fă destinația identică cu sursa."
+
+msgid "Mirror a folder to a remote"
+msgstr "Oglindește un folder pe un remote"
+
+msgid "Make a cloud remote an exact mirror of a local folder."
+msgstr "Fă dintr-un remote cloud o oglindă exactă a unui folder local."
+
+msgid "Restore from a backup"
+msgstr "Restaurează dintr-un backup"
+
+msgid "Copy files back from a backup location to their original folder."
+msgstr "Copiază fișierele înapoi dintr-o locație de backup în folderul original."
+
+msgid "completed"
+msgstr "finalizat"
+
+msgid "failed"
+msgstr "eșuat"
+
+msgid "running"
+msgstr "în curs"
+
+msgid "cancelled"
+msgstr "anulat"
+
+msgid "safe"
+msgstr "sigur"
+
+msgid "caution"
+msgstr "atenție"
+
+msgid "destructive"
+msgstr "destructiv"
