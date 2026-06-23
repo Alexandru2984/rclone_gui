@@ -105,20 +105,41 @@ fn exec_start(binary_path: &str, argv: &[String]) -> String {
 }
 
 /// Quote a single argument for a systemd `ExecStart=` line.
+///
+/// `%` is **not** treated as simple — systemd reads it as a specifier (`%h`,
+/// `%i`, …), so it is always doubled (`%%`). Control characters (notably a
+/// newline, which would otherwise split the line and let a crafted path inject
+/// a new unit directive) are C-escaped inside the quotes.
 fn systemd_quote(s: &str) -> String {
     let simple = !s.is_empty()
         && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@+,".contains(c));
     if simple {
-        s.to_string()
-    } else {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        return s.to_string();
     }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '%' => out.push_str("%%"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
-/// Collapse newlines so a name can't break the unit file.
+/// Strip control characters (incl. newlines) so a name can't break the file.
 fn one_line(s: &str) -> String {
-    s.replace(['\n', '\r'], " ")
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 #[cfg(test)]
@@ -167,5 +188,32 @@ mod tests {
         assert_eq!(systemd_quote("/plain/path"), "/plain/path");
         assert_eq!(systemd_quote("a b"), "\"a b\"");
         assert_eq!(systemd_quote(r#"a"b"#), r#""a\"b""#);
+    }
+
+    #[test]
+    fn quoting_neutralizes_systemd_specifiers_and_newlines() {
+        // '%' must be doubled so it isn't read as a specifier like %h.
+        assert_eq!(systemd_quote("back%h"), "\"back%%h\"");
+        // A newline must be escaped, not written literally (no directive injection).
+        let q = systemd_quote("a\nExecStartPre=/bin/rm");
+        assert!(!q.contains('\n'), "newline leaked into the quoted arg");
+        assert!(q.contains("\\n"));
+        // And it shows up escaped in a full unit too.
+        let u = build_units("x", "/usr/bin/rsync", &["a\nb".into()], "daily");
+        assert!(!u.service.lines().any(|l| l == "ExecStartPre=/bin/rm"));
+    }
+
+    #[test]
+    fn description_strips_control_chars() {
+        let u = build_units(
+            "evil\n[Service]\nExecStart=/bin/rm",
+            "/bin/true",
+            &[],
+            "daily",
+        );
+        // The injected newline is gone from the Description line.
+        assert!(u
+            .service
+            .contains("Description=Cascade job: evil [Service] ExecStart=/bin/rm"));
     }
 }
