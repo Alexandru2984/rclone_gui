@@ -35,25 +35,35 @@ responsible for what you run. Cascade's safety guarantees:
 
 Eight screens: **Dashboard · Backup Assistant · New Job · Remotes · Mounts · Profiles · History · Settings**.
 
-- **Both tools**: `copy` / `sync (mirror)` / `move` for rclone and rsync — built as
-  argument vectors, **never a shell string** (no injection).
+- **Both tools**: `copy` / `sync (mirror)` / `move` for rclone and rsync — plus
+  **two-way `bisync`** (rclone) — built as argument vectors, **never a shell
+  string** (no injection).
 - **New Job**: tool/operation pickers, folder choosers, a live **command preview**, a
   **risk badge**, **dry-run** + **Start**, live **progress** (speed/ETA), **Cancel**, and a
   collapsible **Advanced** section (include/exclude, transfers/checkers/bwlimit/retries,
-  checksum, compress, SSH port, and validated **custom flags**).
+  checksum, compress, SSH port, **max-delete guard**, **backup-dir** for reversible
+  sync, and validated **custom flags**).
+- **Dry-run summary**: a dry-run reports a one-line **N new · N updated · N to
+  delete** digest, not just raw output.
 - **Backup Assistant**: guided scenarios (photos, projects, Google Drive, VPS over SSH,
   mirror, restore…) that preconfigure a job and hand it to New Job.
 - **Remotes**: browse rclone remotes and pick paths without typing (async `lsjson`).
 - **Mounts**: mount a remote onto a local folder and manage active mounts (clean unmount).
 - **Scheduling**: export any job as a **systemd user timer** (`Schedule…`) — no
-  always-on daemon; systemd runs it and `journalctl --user` logs it.
-- **Profiles / History**: save & reload jobs; review past runs with status and timing.
+  always-on daemon; systemd runs it and `journalctl --user` logs it. A failing
+  scheduled run raises a **desktop notification** (`OnFailure=`) when `notify-send`
+  is available.
+- **Queue**: run up to N jobs in parallel; the pending queue is **persisted and
+  resumed** across restarts.
+- **Profiles / History**: save & reload jobs; review past runs with status and
+  timing, and **re-run** any of them in one click.
 - **Settings**: light/dark/system theme, destructive-confirmation toggle, parallelism.
-- **Safety**: path guards, destructive-op confirmation, **secret-sanitized** live + on-disk
-  logs, desktop notifications, and an optional **local-only `rclone rcd`** daemon
-  (loopback + random credentials).
+- **Safety**: path guards, **source/destination overlap detection** (wrong-direction /
+  copy-into-itself), destructive-op confirmation, an optional **max-delete guard**,
+  **secret-sanitized** live + on-disk logs, desktop notifications, and an optional
+  **local-only `rclone rcd`** daemon (loopback + random credentials).
 
-All business logic lives in `cascade-core` and is covered by a **130+ test**
+All business logic lives in `cascade-core` and is covered by a **150+ test**
 suite (unit, integration, and property-based), run in CI.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for phase status.
 
@@ -204,7 +214,9 @@ Add a language by copying `po/cascade.pot` to `po/<lang>.po`, translating the
 - **Phase 2 — rclone advanced** ✅ remote browser, mounts, profiles, local RC daemon
 - **Phase 3 — Backup Assistant** ✅ guided scenarios
 - **Phase 4 — rsync advanced** ✅ SSH transport, include/exclude, custom flags (via Advanced)
-- **Phase 5 — polish** 🚧 packaging done; CI green; screenshots + demo pending
+- **Phase 5 — polish** 🚧 packaging done; CI green; safety extras (overlap check,
+  max-delete, backup-dir, dry-run summary), bisync, queue persistence, re-run,
+  scheduled-failure notifications; screenshots + demo pending
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 
