@@ -520,4 +520,88 @@ mod tests {
         assert_eq!(runs[0].run_id, r2);
         assert_eq!(runs[1].run_id, r1);
     }
+
+    #[test]
+    fn recent_runs_respects_the_limit() {
+        let store = Store::open_in_memory().unwrap();
+        let j = store
+            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .unwrap();
+        for _ in 0..5 {
+            store.start_run(j, false, "cmd").unwrap();
+        }
+        assert_eq!(store.recent_runs(3).unwrap().len(), 3);
+        assert_eq!(store.recent_runs(100).unwrap().len(), 5);
+        assert_eq!(store.recent_runs(0).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn list_profiles_skips_corrupted_rows() {
+        let store = Store::open_in_memory().unwrap();
+        // A valid profile...
+        let spec = JobSpec {
+            name: "good".into(),
+            tool: crate::Tool::Rsync,
+            op: crate::job::OpKind::Copy,
+            source: "/a/".into(),
+            destination: "/b/".into(),
+            dry_run: false,
+            delete: false,
+            options: Default::default(),
+        };
+        store.save_profile(&spec).unwrap();
+        // ...and a row with unparseable options_json inserted directly.
+        store
+            .conn
+            .execute(
+                "INSERT INTO profiles (name, kind, operation, source, destination, options_json, created_at, updated_at)
+                 VALUES ('bad','rsync','copy','/a','/b','{ not json', 0, 0)",
+                [],
+            )
+            .unwrap();
+        // The corrupt row is skipped, not fatal.
+        let profiles = store.list_profiles().unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "good");
+    }
+
+    #[test]
+    fn queue_list_skips_corrupted_rows() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO queue_items (spec_json, position, created_at) VALUES ('{bad', 0, 0)",
+                [],
+            )
+            .unwrap();
+        // A bad blob is skipped rather than erroring the whole load.
+        assert!(store.queue_list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn job_spec_for_run_returns_none_on_bad_json() {
+        let store = Store::open_in_memory().unwrap();
+        let job = store
+            .insert_job("j", "rsync", "copy", "/a", "/b", "{not valid")
+            .unwrap();
+        let run = store.start_run(job, false, "cmd").unwrap();
+        assert!(store.job_spec_for_run(run).unwrap().is_none());
+    }
+
+    #[test]
+    fn finish_run_records_error_summary() {
+        let store = Store::open_in_memory().unwrap();
+        let job = store
+            .insert_job("j", "rsync", "sync", "/a", "/b", "{}")
+            .unwrap();
+        let run = store.start_run(job, false, "cmd").unwrap();
+        store
+            .finish_run(run, "failed", Some(23), Some("disk full"))
+            .unwrap();
+        let r = &store.recent_runs(1).unwrap()[0];
+        assert_eq!(r.status, "failed");
+        assert_eq!(r.exit_code, Some(23));
+        assert!(r.ended_at.is_some());
+    }
 }

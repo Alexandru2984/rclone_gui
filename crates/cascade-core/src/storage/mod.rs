@@ -126,6 +126,53 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_file_db_preserves_data_and_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cascade.db");
+
+        // First open: create + migrate, write a profile and a queue item.
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(
+                store.current_version().unwrap(),
+                schema::MIGRATIONS.len() as i64
+            );
+            store
+                .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+                .unwrap();
+            store.set_setting("k", "v").unwrap();
+        }
+        // Reopen: migrations are a no-op, and data survives.
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(
+                store.current_version().unwrap(),
+                schema::MIGRATIONS.len() as i64
+            );
+            assert_eq!(store.get_setting("k").unwrap().as_deref(), Some("v"));
+            assert_eq!(store.recent_runs(10).unwrap().len(), 0); // job but no run yet
+        }
+    }
+
+    #[test]
+    fn missing_setting_is_none() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.get_setting("does-not-exist").unwrap(), None);
+    }
+
+    #[test]
+    fn setting_can_hold_empty_and_unicode_values() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_setting("empty", "").unwrap();
+        store.set_setting("uni", "café 🚀").unwrap();
+        assert_eq!(store.get_setting("empty").unwrap().as_deref(), Some(""));
+        assert_eq!(
+            store.get_setting("uni").unwrap().as_deref(),
+            Some("café 🚀")
+        );
+    }
+
+    #[test]
     fn expected_tables_exist() {
         let store = Store::open_in_memory().unwrap();
         let count: i64 = store

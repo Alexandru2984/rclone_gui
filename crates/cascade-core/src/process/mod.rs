@@ -435,4 +435,88 @@ mod tests {
             }
         }
     }
+
+    /// Drain a handle to its Finished event, returning (success, code).
+    async fn finish(h: &RunHandle) -> (bool, Option<i32>) {
+        while let Ok(ev) = h.events.recv().await {
+            if let ProcessEvent::Finished { success, code } = ev {
+                return (success, code);
+            }
+        }
+        panic!("channel closed before Finished");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exit_codes_are_propagated() {
+        assert_eq!(finish(&spawn("true", vec![])).await, (true, Some(0)));
+        assert_eq!(finish(&spawn("false", vec![])).await, (false, Some(1)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn environment_is_passed_to_the_child() {
+        let h = spawn_env(
+            "printenv",
+            vec!["CASCADE_TEST_VAR".into()],
+            vec![("CASCADE_TEST_VAR".into(), "value-42".into())],
+            None,
+        );
+        let mut saw = false;
+        while let Ok(ev) = h.events.recv().await {
+            match ev {
+                ProcessEvent::Stdout(l) if l.contains("value-42") => saw = true,
+                ProcessEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(saw, "child did not see the injected env var");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_returns_stdout_on_success() {
+        let rx = capture("echo", vec!["hello-capture".into()]);
+        let out = rx.recv().await.unwrap();
+        assert_eq!(out.unwrap().trim(), "hello-capture");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_reports_failure_as_err() {
+        let rx = capture("false", vec![]);
+        assert!(rx.recv().await.unwrap().is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_reports_missing_binary() {
+        let rx = capture("definitely-not-a-real-binary-xyz", vec![]);
+        let err = rx.recv().await.unwrap().unwrap_err();
+        assert!(err.contains("not found"), "unexpected error: {err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_env_passes_environment() {
+        let rx = capture_env(
+            "printenv",
+            vec!["CASCADE_CAP_VAR".into()],
+            vec![("CASCADE_CAP_VAR".into(), "cap-value".into())],
+        );
+        assert_eq!(rx.recv().await.unwrap().unwrap().trim(), "cap-value");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn double_cancel_is_safe() {
+        let h = spawn("sleep", vec!["30".into()]);
+        loop {
+            match h.events.recv().await {
+                Ok(ProcessEvent::Started { .. }) => break,
+                Ok(_) => {}
+                Err(_) => panic!("channel closed before start"),
+            }
+        }
+        // Calling cancel more than once must not panic or hang.
+        h.cancel();
+        h.cancel();
+        let (success, _) = tokio::time::timeout(std::time::Duration::from_secs(4), finish(&h))
+            .await
+            .expect("cancel should finish promptly");
+        assert!(!success);
+    }
 }
