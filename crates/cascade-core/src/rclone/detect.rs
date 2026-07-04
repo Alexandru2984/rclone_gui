@@ -39,7 +39,7 @@ pub(crate) fn detect_named(binary: &str, version_args: &[&str]) -> Option<ToolIn
 }
 
 /// Minimal `which`: scan `PATH` for an executable `binary`. No shell involved.
-fn which(binary: &str) -> Option<std::path::PathBuf> {
+pub fn which(binary: &str) -> Option<std::path::PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_var) {
         let candidate = dir.join(binary);

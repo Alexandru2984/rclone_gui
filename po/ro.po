@@ -265,3 +265,6 @@ msgstr "Anulează dacă s-ar șterge mai mult de N fișiere (0 = fără limită)
 
 msgid "Backup directory for replaced/deleted files (reversible sync)"
 msgstr "Director de backup pentru fișierele înlocuite/șterse (sincronizare reversibilă)"
+
+msgid "Scheduled backup failed"
+msgstr "Copierea de rezervă programată a eșuat"

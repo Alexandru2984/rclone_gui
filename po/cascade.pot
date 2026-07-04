@@ -94,3 +94,6 @@ msgstr ""
 
 msgid "Backup directory for replaced/deleted files (reversible sync)"
 msgstr ""
+
+msgid "Scheduled backup failed"
+msgstr ""

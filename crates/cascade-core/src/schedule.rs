@@ -45,11 +45,16 @@ pub fn unit_id(name: &str) -> String {
 /// `binary_path` should be absolute; `argv` is the exact argument vector (the
 /// same one the runner uses). `on_calendar` is a systemd `OnCalendar=` value
 /// such as `daily`, `hourly`, or `*-*-* 02:00:00`.
+///
+/// `on_failure_unit`, when set, becomes an `OnFailure=` directive so systemd
+/// runs that unit if the job fails (see [`build_notify_unit`]). It must be a
+/// unit name we control (never user free-text).
 pub fn build_units(
     name: &str,
     binary_path: &str,
     argv: &[String],
     on_calendar: &str,
+    on_failure_unit: Option<&str>,
 ) -> ScheduleUnit {
     let id = unit_id(name);
     let service_name = format!("cascade-{id}.service");
@@ -57,9 +62,12 @@ pub fn build_units(
     let desc = one_line(name);
     let exec = exec_start(binary_path, argv);
 
+    let mut unit_section = format!("[Unit]\nDescription=Cascade job: {desc}\n");
+    if let Some(u) = on_failure_unit {
+        unit_section.push_str(&format!("OnFailure={u}\n"));
+    }
     let service = format!(
-        "[Unit]\n\
-         Description=Cascade job: {desc}\n\
+        "{unit_section}\
          \n\
          [Service]\n\
          Type=oneshot\n\
@@ -83,6 +91,34 @@ pub fn build_units(
         service,
         timer,
     }
+}
+
+/// The file name of the shared failure-notification template unit.
+pub const NOTIFY_UNIT_FILE: &str = "cascade-notify@.service";
+
+/// The `OnFailure=` instance to attach to a job named `name`. systemd passes the
+/// job id as the template instance (`%i`), which the notification shows.
+pub fn notify_instance_for(name: &str) -> String {
+    format!("cascade-notify@{}.service", unit_id(name))
+}
+
+/// Build the shared `cascade-notify@.service` template unit. One instance is
+/// started per failing job (via `OnFailure=`); `%i` is the failing job's id.
+///
+/// `notify_send_path` is the absolute path to `notify-send`; `title` is the
+/// (already localized) notification summary. Both are systemd-quoted; `%i` is a
+/// systemd specifier and is intentionally left unquoted (the id is a safe slug).
+pub fn build_notify_unit(notify_send_path: &str, title: &str) -> String {
+    format!(
+        "[Unit]\n\
+         Description=Cascade scheduled-job failure notification for %i\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         ExecStart={} {} %i\n",
+        systemd_quote(notify_send_path),
+        systemd_quote(title),
+    )
 }
 
 /// Read the `OnCalendar=` value out of a `.timer` file's contents.
@@ -160,7 +196,7 @@ mod tests {
             "/my data".to_string(),
             "gdrive:b".to_string(),
         ];
-        let u = build_units("My Job", "/usr/bin/rclone", &argv, "daily");
+        let u = build_units("My Job", "/usr/bin/rclone", &argv, "daily", None);
         assert_eq!(u.service_name, "cascade-my-job.service");
         assert_eq!(u.timer_name, "cascade-my-job.timer");
         assert!(u.service.contains("Type=oneshot"));
@@ -168,14 +204,37 @@ mod tests {
         assert!(u
             .service
             .contains("ExecStart=/usr/bin/rclone copy \"/my data\" gdrive:b"));
+        assert!(!u.service.contains("OnFailure="));
         assert!(u.timer.contains("OnCalendar=daily"));
         assert!(u.timer.contains("WantedBy=timers.target"));
         assert!(u.timer.contains("Persistent=true"));
     }
 
     #[test]
+    fn on_failure_directive_is_added_when_requested() {
+        let unit = notify_instance_for("Nightly Backup");
+        assert_eq!(unit, "cascade-notify@nightly-backup.service");
+        let u = build_units("Nightly Backup", "/usr/bin/rsync", &[], "daily", Some(&unit));
+        assert!(u
+            .service
+            .contains("OnFailure=cascade-notify@nightly-backup.service"));
+        // Exactly one OnFailure line, inside [Unit] and before [Service].
+        let on_fail = u.service.find("OnFailure=").unwrap();
+        let service_hdr = u.service.find("[Service]").unwrap();
+        assert!(on_fail < service_hdr);
+    }
+
+    #[test]
+    fn notify_unit_quotes_path_and_title_but_keeps_specifier() {
+        let unit = build_notify_unit("/usr/bin/notify-send", "Scheduled job failed");
+        // Title is quoted (has a space); %i is left as a live systemd specifier.
+        assert!(unit.contains("ExecStart=/usr/bin/notify-send \"Scheduled job failed\" %i"));
+        assert!(unit.contains("Type=oneshot"));
+    }
+
+    #[test]
     fn reads_on_calendar_back() {
-        let u = build_units("x", "/usr/bin/rsync", &["-a".into()], "Mon *-*-* 09:00");
+        let u = build_units("x", "/usr/bin/rsync", &["-a".into()], "Mon *-*-* 09:00", None);
         assert_eq!(
             parse_on_calendar(&u.timer).as_deref(),
             Some("Mon *-*-* 09:00")
@@ -199,7 +258,7 @@ mod tests {
         assert!(!q.contains('\n'), "newline leaked into the quoted arg");
         assert!(q.contains("\\n"));
         // And it shows up escaped in a full unit too.
-        let u = build_units("x", "/usr/bin/rsync", &["a\nb".into()], "daily");
+        let u = build_units("x", "/usr/bin/rsync", &["a\nb".into()], "daily", None);
         assert!(!u.service.lines().any(|l| l == "ExecStartPre=/bin/rm"));
     }
 
@@ -210,6 +269,7 @@ mod tests {
             "/bin/true",
             &[],
             "daily",
+            None,
         );
         // The injected newline is gone from the Description line.
         assert!(u

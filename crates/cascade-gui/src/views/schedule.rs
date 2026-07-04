@@ -88,12 +88,30 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
             return;
         }
 
-        let units = schedule::build_units(&spec.name, &bin_path, &argv, &on_calendar);
         let dir = systemd_user_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
             status.set_label(&format!("✗ Could not create {dir}: {e}"));
             return;
         }
+
+        // If notify-send is available, wire an OnFailure= hook so a failed
+        // scheduled run raises a desktop notification (not just a journal entry).
+        let on_failure = match rclone::detect::which("notify-send") {
+            Some(path) => {
+                let title = crate::i18n::tr("Scheduled backup failed");
+                let unit = schedule::build_notify_unit(&path.to_string_lossy(), &title);
+                let notify_path = format!("{dir}/{}", schedule::NOTIFY_UNIT_FILE);
+                if std::fs::write(&notify_path, unit).is_ok() {
+                    Some(schedule::notify_instance_for(&spec.name))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+
+        let units =
+            schedule::build_units(&spec.name, &bin_path, &argv, &on_calendar, on_failure.as_deref());
         let service_path = format!("{dir}/{}", units.service_name);
         let timer_path = format!("{dir}/{}", units.timer_name);
         if let Err(e) = std::fs::write(&service_path, &units.service)
