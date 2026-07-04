@@ -10,6 +10,7 @@ use std::sync::Arc;
 use adw::prelude::*;
 use gtk::gio;
 
+use cascade_core::dryrun::DryRunSummary;
 use cascade_core::job::{AdvancedOptions, JobSpec, OpKind};
 use cascade_core::logs::LogWriter;
 use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle};
@@ -854,6 +855,8 @@ impl Inputs {
 
         let job_name = spec.name.clone();
         let preview_log = preview.clone();
+        let is_dry = spec.dry_run;
+        let tool = spec.tool;
         let this = self.clone();
         glib::spawn_future_local(async move {
             // Per-run on-disk log (sanitized lines only).
@@ -865,6 +868,8 @@ impl Inputs {
             let mut exit_code = None;
             let mut failed = false;
             let mut error_summary: Option<String> = None;
+            // On a dry-run, tally what the real run would change.
+            let mut dry = DryRunSummary::default();
             while let Ok(ev) = events.recv().await {
                 match ev {
                     ProcessEvent::Started { pid } => {
@@ -875,11 +880,17 @@ impl Inputs {
                         if let Some(w) = log.as_mut() {
                             let _ = w.write_line(&line);
                         }
+                        if is_dry {
+                            dry.record_line(tool, &line);
+                        }
                         this.log_line(&line);
                     }
                     ProcessEvent::Stderr(line) => {
                         if let Some(w) = log.as_mut() {
                             let _ = w.write_line(&line);
+                        }
+                        if is_dry {
+                            dry.record_line(tool, &line);
                         }
                         this.log_line(&format!("! {line}"));
                     }
@@ -897,6 +908,12 @@ impl Inputs {
                         break;
                     }
                 }
+            }
+            // Surface the dry-run's shape at a glance, not just as raw lines.
+            if is_dry && !failed {
+                let text = format!("▸ {}: {}", crate::i18n::tr("Dry-run"), dry.describe());
+                this.log_line(&text);
+                this.progress_label.set_label(&text);
             }
             let status = if failed { "failed" } else { "completed" };
             let _ = this

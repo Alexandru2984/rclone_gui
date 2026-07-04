@@ -82,6 +82,9 @@ pub fn build_args(source: &str, dest: &str, opts: &RsyncOptions) -> Result<Vec<S
     }
     if opts.dry_run {
         args.push("-n".into());
+        // Itemize so a dry-run's output can be summarized into new/updated/
+        // deleted counts (see crate::dryrun).
+        args.push("--itemize-changes".into());
     }
     if opts.delete {
         args.push("--delete".into());

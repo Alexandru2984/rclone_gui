@@ -10,6 +10,7 @@
 
 pub mod assistant;
 pub mod config;
+pub mod dryrun;
 pub mod error;
 pub mod job;
 pub mod logs;
