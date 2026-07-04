@@ -63,6 +63,8 @@ struct Inputs {
 
     /// Callback to refresh sibling screens (History, Profiles) after a change.
     on_changed: Rc<dyn Fn()>,
+    /// Callback that hands a spec to the Jobs Queue.
+    enqueue: Rc<dyn Fn(JobSpec)>,
 }
 
 /// Public handle to the New Job screen: its root widget plus the ability to
@@ -351,21 +353,18 @@ pub fn build(
         save_btn,
         current: RefCell::new(None),
         on_changed,
+        enqueue: on_enqueue,
     });
 
     inputs.wire();
     inputs.refresh_preview();
 
-    // "Add to queue" reads the current form and hands the spec to the queue.
+    // "Add to queue" reads the current form and hands the spec to the queue,
+    // going through the same destructive-op confirmation gate as "Start" so a
+    // mirror/delete can't be queued (and later run unattended) without consent.
     {
         let inputs = inputs.clone();
-        queue_btn.connect_clicked(move |_| match inputs.read_spec() {
-            Ok(spec) => {
-                on_enqueue(spec);
-                inputs.log_line("✓ added to queue");
-            }
-            Err(e) => inputs.log_line(&format!("✗ {e}")),
-        });
+        queue_btn.connect_clicked(move |_| inputs.add_to_queue());
     }
 
     // "Schedule…" exports the current job as a systemd user timer.
@@ -607,7 +606,8 @@ impl Inputs {
             }
             Err(msg) => {
                 self.preview.set_label(&format!("⚠ {msg}"));
-                self.risk.set_label(&crate::i18n::tr(""));
+                // Empty label, not tr("") — gettext("") returns the catalog header.
+                self.risk.set_label("");
                 for c in ["success", "warning", "error"] {
                     self.risk.remove_css_class(c);
                 }
@@ -617,14 +617,17 @@ impl Inputs {
 
     fn set_risk(&self, risk: RiskLevel) {
         let (text, css) = match risk {
-            RiskLevel::Safe => ("✓ Safe — nothing is deleted", "success"),
-            RiskLevel::Caution => ("• Files may be overwritten at the destination", "warning"),
+            RiskLevel::Safe => (crate::i18n::tr("✓ Safe — nothing is deleted"), "success"),
+            RiskLevel::Caution => (
+                crate::i18n::tr("• Files may be overwritten at the destination"),
+                "warning",
+            ),
             RiskLevel::Destructive => (
-                "⚠ Destructive — files at the destination may be deleted",
+                crate::i18n::tr("⚠ Destructive — files at the destination may be deleted"),
                 "error",
             ),
         };
-        self.risk.set_label(text);
+        self.risk.set_label(&text);
         for c in ["success", "warning", "error"] {
             self.risk.remove_css_class(c);
         }
@@ -637,6 +640,50 @@ impl Inputs {
         } else {
             self.run_btn.add_css_class("suggested-action");
         }
+    }
+
+    /// "Add to queue" handler: confirm first if the operation is destructive,
+    /// because queued jobs run unattended with no further prompt.
+    fn add_to_queue(self: &Rc<Self>) {
+        let spec = match self.read_spec() {
+            Ok(s) => s,
+            Err(e) => {
+                self.log_line(&format!("✗ {e}"));
+                return;
+            }
+        };
+        let confirm = self.ctx.settings.borrow().confirm_destructive;
+        if spec.risk().requires_confirmation() && confirm {
+            self.confirm_enqueue(spec);
+        } else {
+            (self.enqueue)(spec);
+            self.log_line(&crate::i18n::tr("✓ added to queue"));
+        }
+    }
+
+    /// Confirm before queuing a destructive job. Unlike the Start dialog there
+    /// is no "dry-run first" option — the safe default is simply to not queue.
+    fn confirm_enqueue(self: &Rc<Self>, spec: JobSpec) {
+        let body = crate::i18n::tr(
+            "This operation can delete files at the destination. Queued jobs run without a further prompt.\n\n%s",
+        )
+        .replace("%s", &spec.preview().unwrap_or_default());
+        let cancel_l = crate::i18n::tr("Cancel");
+        let add_l = crate::i18n::tr("Add to queue");
+        let dialog =
+            adw::AlertDialog::new(Some(&crate::i18n::tr("Destructive operation")), Some(&body));
+        dialog.add_responses(&[("cancel", cancel_l.as_str()), ("add", add_l.as_str())]);
+        dialog.set_response_appearance("add", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let this = self.clone();
+        dialog.choose(&self.window, gio::Cancellable::NONE, move |resp| {
+            if resp.as_str() == "add" {
+                (this.enqueue)(spec);
+                this.log_line(&crate::i18n::tr("✓ added to queue"));
+            }
+        });
     }
 
     /// Start handler: confirm first if the operation is destructive.
@@ -837,8 +884,12 @@ impl Inputs {
     /// Send a desktop notification when a run finishes.
     fn notify_done(&self, job_name: &str, ok: bool) {
         if let Some(app) = self.window.application() {
-            let title = if ok { "Job completed" } else { "Job failed" };
-            let notif = gio::Notification::new(title);
+            let title = if ok {
+                crate::i18n::tr("Job completed")
+            } else {
+                crate::i18n::tr("Job failed")
+            };
+            let notif = gio::Notification::new(&title);
             notif.set_body(Some(job_name));
             app.send_notification(Some("cascade-run-finished"), &notif);
         }

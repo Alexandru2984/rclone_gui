@@ -240,7 +240,7 @@ impl MountsView {
                 return;
             }
         };
-        self.status.set_label(&crate::i18n::tr(""));
+        self.status.set_label(""); // not tr("") — gettext("") returns the catalog header
 
         let handle = spawn("rclone", argv);
         let events = handle.events.clone();

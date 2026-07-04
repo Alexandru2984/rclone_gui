@@ -257,7 +257,7 @@ impl RemoteBrowserView {
                         this.remotes.borrow_mut().clear();
                         this.remote_combo.set_model(gtk::gio::ListModel::NONE);
                         this.list.remove_all();
-                        this.path_label.set_label(&crate::i18n::tr(""));
+                        this.path_label.set_label(""); // not tr("") — gettext("") returns the catalog header
                         this.status.set_label(&crate::i18n::tr(
                             "No rclone remotes configured. Use “+” to add one.",
                         ));

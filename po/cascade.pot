@@ -52,3 +52,30 @@ msgstr ""
 
 msgid "Schedule…"
 msgstr ""
+
+msgid "Destructive operation"
+msgstr ""
+
+msgid "This operation can delete files at the destination. Queued jobs run without a further prompt.\n\n%s"
+msgstr ""
+
+msgid "✓ added to queue"
+msgstr ""
+
+msgid "✓ Safe — nothing is deleted"
+msgstr ""
+
+msgid "• Files may be overwritten at the destination"
+msgstr ""
+
+msgid "⚠ Destructive — files at the destination may be deleted"
+msgstr ""
+
+msgid "Job completed"
+msgstr ""
+
+msgid "Job failed"
+msgstr ""
+
+msgid "✗ This job embeds a credential. Configure an rclone remote and reference it instead."
+msgstr ""

@@ -63,9 +63,9 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
     create.connect_clicked(move |btn| {
         // Never write a credential into a (world-readable) unit file.
         if spec.contains_secret() {
-            status.set_label(
+            status.set_label(&crate::i18n::tr(
                 "✗ This job embeds a credential. Configure an rclone remote and reference it instead.",
-            );
+            ));
             return;
         }
         let bin_path = match tool_path(spec.tool) {

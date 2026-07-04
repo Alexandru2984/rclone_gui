@@ -226,3 +226,27 @@ msgstr "atenție"
 
 msgid "destructive"
 msgstr "destructiv"
+
+msgid "This operation can delete files at the destination. Queued jobs run without a further prompt.\n\n%s"
+msgstr "Această operație poate șterge fișiere de la destinație. Sarcinile din coadă rulează fără o altă confirmare.\n\n%s"
+
+msgid "✓ added to queue"
+msgstr "✓ adăugat în coadă"
+
+msgid "✓ Safe — nothing is deleted"
+msgstr "✓ Sigur — nu se șterge nimic"
+
+msgid "• Files may be overwritten at the destination"
+msgstr "• Fișierele de la destinație pot fi suprascrise"
+
+msgid "⚠ Destructive — files at the destination may be deleted"
+msgstr "⚠ Destructiv — fișierele de la destinație pot fi șterse"
+
+msgid "Job completed"
+msgstr "Sarcină finalizată"
+
+msgid "Job failed"
+msgstr "Sarcină eșuată"
+
+msgid "✗ This job embeds a credential. Configure an rclone remote and reference it instead."
+msgstr "✗ Această sarcină conține o parolă. Configurează un remote rclone și folosește-l în schimb."
