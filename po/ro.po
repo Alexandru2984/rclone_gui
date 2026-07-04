@@ -274,3 +274,6 @@ msgstr "Bisync (bidirecțional)"
 
 msgid "First bisync run — establish baseline (--resync)"
 msgstr "Prima rulare bisync — stabilește baza de referință (--resync)"
+
+msgid "Re-run"
+msgstr "Rulează din nou"

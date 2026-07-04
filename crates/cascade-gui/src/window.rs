@@ -18,6 +18,9 @@ use crate::views::{
     assistant, dashboard, history::HistoryView, new_job, profiles::ProfilesView, settings,
 };
 
+/// A callback that loads a job spec into the New Job screen.
+type LoadCallback = Rc<dyn Fn(JobSpec)>;
+
 pub struct MainWindow;
 
 impl MainWindow {
@@ -31,9 +34,22 @@ impl MainWindow {
 
         let stack = adw::ViewStack::new();
 
+        // History needs an "on_load" to re-run a past job, but the real one
+        // (which loads into New Job) only exists after New Job is built. Bridge
+        // the cycle with a slot that is filled in below.
+        let on_load_slot: Rc<RefCell<Option<LoadCallback>>> = Rc::new(RefCell::new(None));
+        let history_on_load: LoadCallback = {
+            let slot = on_load_slot.clone();
+            Rc::new(move |spec| {
+                if let Some(f) = slot.borrow().as_ref() {
+                    f(spec);
+                }
+            })
+        };
+
         // History + a slot for Profiles so `on_changed` can refresh both even
         // though Profiles is constructed slightly later.
-        let history = HistoryView::new(ctx.clone(), window.clone());
+        let history = HistoryView::new(ctx.clone(), window.clone(), history_on_load);
         let profiles_slot: Rc<RefCell<Option<ProfilesView>>> = Rc::new(RefCell::new(None));
 
         let on_changed: Rc<dyn Fn()> = {
@@ -74,6 +90,8 @@ impl MainWindow {
                 stack.set_visible_child_name("new-job");
             })
         };
+        // Now that the real loader exists, let History's "Re-run" use it too.
+        *on_load_slot.borrow_mut() = Some(on_load.clone());
         // The Assistant produces a preconfigured spec and reuses the same
         // "load into New Job and switch there" path as profiles.
         let assistant_widget = assistant::build(window.clone(), on_load.clone());

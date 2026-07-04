@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
+use cascade_core::job::JobSpec;
 use cascade_core::storage::RunRecord;
 
 use crate::ctx::AppCtx;
@@ -17,10 +18,15 @@ pub struct HistoryView {
     empty: gtk::Label,
     ctx: Rc<AppCtx>,
     window: adw::ApplicationWindow,
+    on_load: Rc<dyn Fn(JobSpec)>,
 }
 
 impl HistoryView {
-    pub fn new(ctx: Rc<AppCtx>, window: adw::ApplicationWindow) -> Self {
+    pub fn new(
+        ctx: Rc<AppCtx>,
+        window: adw::ApplicationWindow,
+        on_load: Rc<dyn Fn(JobSpec)>,
+    ) -> Self {
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .css_classes(vec!["boxed-list".to_string()])
@@ -58,6 +64,7 @@ impl HistoryView {
             empty,
             ctx,
             window,
+            on_load,
         }
     }
 
@@ -76,8 +83,9 @@ impl HistoryView {
             row.set_activatable(true);
             let ctx = self.ctx.clone();
             let window = self.window.clone();
+            let on_load = self.on_load.clone();
             row.connect_activated(move |_| {
-                job_details::present(&window, &ctx, run.clone());
+                job_details::present(&window, &ctx, run.clone(), on_load.clone());
             });
             self.list.append(&row);
         }

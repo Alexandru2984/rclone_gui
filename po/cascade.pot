@@ -103,3 +103,6 @@ msgstr ""
 
 msgid "First bisync run — establish baseline (--resync)"
 msgstr ""
+
+msgid "Re-run"
+msgstr ""

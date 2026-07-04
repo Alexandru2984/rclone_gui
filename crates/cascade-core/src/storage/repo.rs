@@ -228,6 +228,22 @@ impl Store {
         Ok(())
     }
 
+    /// Reconstruct the [`JobSpec`] behind a past run, for re-running it. The
+    /// full spec is stored as `jobs.options_json`. Returns `None` if the run or
+    /// its job is gone, or the stored JSON no longer deserializes.
+    pub fn job_spec_for_run(&self, run_id: i64) -> Result<Option<JobSpec>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT j.options_json FROM job_runs r JOIN jobs j ON j.id = r.job_id
+                 WHERE r.id = ?1",
+                [run_id],
+                |r| r.get(0),
+            )
+            .ok();
+        Ok(json.and_then(|j| serde_json::from_str::<JobSpec>(&j).ok()))
+    }
+
     /// Load the persisted pending-queue specs, in saved order.
     pub fn queue_list(&self) -> Result<Vec<JobSpec>> {
         let mut stmt = self
@@ -449,6 +465,38 @@ mod tests {
         // An empty replace drains the queue.
         store.queue_replace(&[]).unwrap();
         assert!(store.queue_list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn job_spec_for_run_roundtrips() {
+        use crate::job::OpKind;
+        use crate::Tool;
+
+        let store = Store::open_in_memory().unwrap();
+        let spec = JobSpec {
+            name: "reload me".into(),
+            tool: Tool::Rclone,
+            op: OpKind::Sync,
+            source: "gdrive:a".into(),
+            destination: "/local/b".into(),
+            dry_run: false,
+            delete: false,
+            options: Default::default(),
+        };
+        let options_json = serde_json::to_string(&spec).unwrap();
+        let job = store
+            .insert_job("reload me", "rclone", "sync", "gdrive:a", "/local/b", &options_json)
+            .unwrap();
+        let run = store.start_run(job, false, "rclone sync gdrive:a /local/b").unwrap();
+
+        let back = store.job_spec_for_run(run).unwrap().unwrap();
+        assert_eq!(back.name, "reload me");
+        assert_eq!(back.tool, Tool::Rclone);
+        assert_eq!(back.op, OpKind::Sync);
+        assert_eq!(back.source, "gdrive:a");
+
+        // Unknown run id yields None, not an error.
+        assert!(store.job_spec_for_run(9999).unwrap().is_none());
     }
 
     #[test]

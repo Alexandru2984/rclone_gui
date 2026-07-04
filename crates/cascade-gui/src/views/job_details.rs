@@ -5,13 +5,20 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
+use cascade_core::job::JobSpec;
 use cascade_core::logs::{classify, Level};
 use cascade_core::storage::RunRecord;
 
 use crate::ctx::AppCtx;
 
-/// Show the details dialog for `run`, attached to `parent`.
-pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord) {
+/// Show the details dialog for `run`, attached to `parent`. `on_load` loads a
+/// spec back into New Job so a past run can be re-run.
+pub fn present(
+    parent: &adw::ApplicationWindow,
+    ctx: &Rc<AppCtx>,
+    run: RunRecord,
+    on_load: Rc<dyn Fn(JobSpec)>,
+) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&crate::i18n::tr("Run details"));
     dialog.set_content_width(700);
@@ -146,6 +153,19 @@ pub fn present(parent: &adw::ApplicationWindow, ctx: &Rc<AppCtx>, run: RunRecord
     content.append(&scroller);
 
     let header = adw::HeaderBar::new();
+    // "Re-run" reloads this run's spec into New Job (if the job still exists).
+    if let Ok(Some(spec)) = ctx.store.job_spec_for_run(run.run_id) {
+        let rerun = gtk::Button::builder()
+            .label(crate::i18n::tr("Re-run"))
+            .css_classes(vec!["suggested-action".to_string()])
+            .build();
+        let dialog_ref = dialog.clone();
+        rerun.connect_clicked(move |_| {
+            on_load(spec.clone());
+            dialog_ref.close();
+        });
+        header.pack_start(&rerun);
+    }
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&content));
