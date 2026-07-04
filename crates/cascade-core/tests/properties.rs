@@ -4,9 +4,11 @@
 
 use proptest::prelude::*;
 
+use cascade_core::dryrun::DryRunSummary;
 use cascade_core::job::{AdvancedOptions, JobSpec, OpKind};
-use cascade_core::schedule::build_units;
-use cascade_core::security::{flags, path, sanitize};
+use cascade_core::schedule::{build_units, unit_id};
+use cascade_core::security::path::{self, Overlap};
+use cascade_core::security::{flags, sanitize};
 use cascade_core::Tool;
 
 proptest! {
@@ -81,5 +83,92 @@ proptest! {
             },
         };
         prop_assert!(spec.contains_secret());
+    }
+
+    /// `unit_id` always yields a valid systemd id fragment: non-empty, lowercase,
+    /// only [a-z0-9_-], no leading/trailing/double dash.
+    #[test]
+    fn unit_id_is_always_a_safe_slug(name in any::<String>()) {
+        let id = unit_id(&name);
+        prop_assert!(!id.is_empty());
+        prop_assert!(id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'));
+        prop_assert!(!id.starts_with('-') && !id.ends_with('-'));
+        prop_assert!(!id.contains("--"));
+    }
+
+    /// A dry-run summary parser never panics and only ever increments counts by
+    /// the number of lines fed (each line contributes at most one change).
+    #[test]
+    fn dryrun_summary_is_bounded(lines in proptest::collection::vec(any::<String>(), 0..30)) {
+        let mut rs = DryRunSummary::default();
+        let mut rc = DryRunSummary::default();
+        for l in &lines {
+            rs.record_line(Tool::Rsync, l);
+            rc.record_line(Tool::Rclone, l);
+        }
+        let total = |s: &DryRunSummary| s.added + s.updated + s.deleted;
+        prop_assert!(total(&rs) <= lines.len() as u64);
+        prop_assert!(total(&rc) <= lines.len() as u64);
+    }
+
+    /// The command preview always begins with the binary name and, once
+    /// sanitized, is free of a password embedded in a `--sftp-pass` flag. The
+    /// secret carries a distinctive prefix so the check can't be satisfied by
+    /// coincidental substrings of the fixed command text.
+    #[test]
+    fn preview_starts_with_binary_and_sanitizes(tail in "[!-~]{0,20}") {
+        let secret = format!("SEKRETzzz{tail}");
+        let mut spec = make_spec(Tool::Rsync, OpKind::Copy, "/src/", "/dst/");
+        spec.options.extra_flags = vec!["--sftp-pass".into(), secret.clone()];
+        let preview = spec.preview().unwrap();
+        prop_assert!(preview.starts_with("rsync "));
+        prop_assert!(preview.contains("SEKRETzzz"), "raw preview should carry the secret");
+        let safe = spec.preview_sanitized().unwrap();
+        prop_assert!(!safe.contains("SEKRETzzz"), "secret leaked into sanitized preview: {safe}");
+    }
+
+    /// Overlap classification is anti-symmetric for the nested cases: swapping
+    /// source and destination flips DestInsideSource <-> SourceInsideDest, and
+    /// Identical stays Identical.
+    #[test]
+    fn overlap_swap_is_consistent(
+        root in "/[a-z]{1,8}/[a-z]{1,8}",
+        child in "[a-z]{1,8}",
+    ) {
+        let nested = format!("{root}/{child}");
+        prop_assert_eq!(path::check_overlap(&root, &nested), Overlap::DestInsideSource);
+        prop_assert_eq!(path::check_overlap(&nested, &root), Overlap::SourceInsideDest);
+        prop_assert_eq!(path::check_overlap(&root, &root), Overlap::Identical);
+    }
+
+    /// Any spec that builds an argv produces a preview that starts with the
+    /// tool's binary — never a shell operator or empty string.
+    #[test]
+    fn every_buildable_spec_previews_with_its_binary(
+        rclone in any::<bool>(),
+        op_idx in 0u8..3,
+        src in "[a-z/]{1,12}",
+        dst in "[a-z/]{1,12}",
+    ) {
+        let tool = if rclone { Tool::Rclone } else { Tool::Rsync };
+        let op = match op_idx { 0 => OpKind::Copy, 1 => OpKind::Sync, _ => OpKind::Move };
+        let spec = make_spec(tool, op, &format!("/{src}"), &format!("/{dst}"));
+        if let Ok(preview) = spec.preview() {
+            prop_assert!(preview.starts_with(spec.binary()));
+        }
+    }
+}
+
+/// Build a simple spec for property tests.
+fn make_spec(tool: Tool, op: OpKind, source: &str, dest: &str) -> JobSpec {
+    JobSpec {
+        name: "p".into(),
+        tool,
+        op,
+        source: source.into(),
+        destination: dest.into(),
+        dry_run: false,
+        delete: false,
+        options: AdvancedOptions::default(),
     }
 }
