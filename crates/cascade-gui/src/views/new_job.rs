@@ -112,9 +112,13 @@ pub fn build(
     on_changed: Rc<dyn Fn()>,
     on_enqueue: Rc<dyn Fn(JobSpec)>,
 ) -> NewJobView {
-    // Prefill with throwaway temp dirs so the screen is immediately runnable.
-    let src = std::env::temp_dir().join("cascade_demo_src");
-    let dst = std::env::temp_dir().join("cascade_demo_dst");
+    // Prefill with throwaway demo dirs so the screen is immediately runnable.
+    // These live under the app's private (0700) data dir — never world-shared
+    // /tmp — so another local user can't win a symlink race on a predictable
+    // path and redirect a demo transfer.
+    let demo = ctx.paths.data_dir.join("demo");
+    let src = demo.join("src");
+    let dst = demo.join("dst");
     let _ = std::fs::create_dir_all(&src);
     let _ = std::fs::create_dir_all(&dst);
     let _ = std::fs::write(src.join("example.txt"), b"demo");

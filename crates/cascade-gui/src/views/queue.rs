@@ -127,8 +127,17 @@ impl QueueView {
             });
         }
         view.refresh_empty();
-        // Restore and resume any queue left pending from a previous session.
-        view.load_persisted();
+        // Restore a queue left pending from a previous session, but start it
+        // PAUSED: a destructive job enqueued before the restart must not run
+        // unattended without the user explicitly resuming it.
+        let restored = view.ctx.store.queue_list().unwrap_or_default();
+        if !restored.is_empty() {
+            view.paused.set(true);
+            pause.set_label(&crate::i18n::tr("Resume"));
+            for spec in restored {
+                view.enqueue(spec); // pump() is suppressed while paused
+            }
+        }
         view
     }
 
@@ -218,18 +227,6 @@ impl QueueView {
         let specs: Vec<JobSpec> = pending.into_iter().map(|(_, s)| s).collect();
         if let Err(e) = self.ctx.store.queue_replace(&specs) {
             tracing::warn!("could not persist the queue: {e}");
-        }
-    }
-
-    /// Reload any queue that was persisted from a previous session and resume it.
-    fn load_persisted(&self) {
-        match self.ctx.store.queue_list() {
-            Ok(specs) => {
-                for spec in specs {
-                    self.enqueue(spec);
-                }
-            }
-            Err(e) => tracing::warn!("could not load the persisted queue: {e}"),
         }
     }
 
