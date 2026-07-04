@@ -110,15 +110,20 @@ impl JobSpec {
         }
     }
 
-    /// Whether the custom flags can delete data or run a remote command.
+    /// Whether the custom flags can delete data or run a command of the user's
+    /// (or a remote's) choosing. Kept deliberately broad — over-escalating to a
+    /// confirmation prompt is cheap; missing a data-losing flag is not.
     fn has_dangerous_flags(&self) -> bool {
         self.options.extra_flags.iter().any(|f| {
-            f.starts_with("--delete")
-                || f == "--remove-source-files"
+            f.starts_with("--delete")               // rclone/rsync delete-* variants
+                || f == "--del"                      // rsync alias of --delete-during
+                || f.starts_with("--remove-source-files")
+                || f == "--remove-sent-files"        // older rsync alias
                 || f == "--rsync-path"
                 || f.starts_with("--rsync-path=")
                 || f == "-e"
                 || f.starts_with("--rsh")
+                || f.starts_with("--password-command") // rclone: runs an arbitrary command
         })
     }
 
@@ -322,6 +327,19 @@ mod tests {
     #[test]
     fn remote_exec_flags_escalate_to_destructive() {
         for flag in ["-e", "--rsync-path=/usr/bin/evil"] {
+            let mut s = spec(Tool::Rsync, OpKind::Copy);
+            s.options.extra_flags = vec![flag.into()];
+            assert_eq!(s.risk(), RiskLevel::Destructive, "{flag} should escalate");
+        }
+    }
+
+    #[test]
+    fn delete_aliases_and_command_flags_escalate() {
+        for flag in [
+            "--del",
+            "--remove-sent-files",
+            "--password-command=/bin/echo x",
+        ] {
             let mut s = spec(Tool::Rsync, OpKind::Copy);
             s.options.extra_flags = vec![flag.into()];
             assert_eq!(s.risk(), RiskLevel::Destructive, "{flag} should escalate");

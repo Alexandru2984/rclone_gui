@@ -53,7 +53,8 @@ Eight screens: **Dashboard · Backup Assistant · New Job · Remotes · Mounts �
   logs, desktop notifications, and an optional **local-only `rclone rcd`** daemon
   (loopback + random credentials).
 
-All business logic lives in `cascade-core` and is covered by **87 unit tests**.
+All business logic lives in `cascade-core` and is covered by a **130+ test**
+suite (unit, integration, and property-based), run in CI.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for phase status.
 
 ---

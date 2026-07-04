@@ -19,6 +19,9 @@ use cascade_core::Tool;
 
 use crate::ctx::AppCtx;
 
+/// Cap on live-log scrollback lines kept in the New Job text view.
+const MAX_LOG_LINES: i32 = 5000;
+
 /// Owns the screen's widgets and behavior. Shared as `Rc<Inputs>` so signal
 /// handlers can call back into it.
 struct Inputs {
@@ -935,13 +938,24 @@ impl Inputs {
     }
 
     fn log_line(&self, text: &str) {
-        let mut end = self.log_buffer.end_iter();
-        self.log_buffer.insert(&mut end, text);
-        self.log_buffer.insert(&mut end, "\n");
-        let mark = self
-            .log_buffer
-            .create_mark(None, &self.log_buffer.end_iter(), false);
-        self.log_view.scroll_mark_onscreen(&mark);
+        let buf = &self.log_buffer;
+        let mut end = buf.end_iter();
+        buf.insert(&mut end, text);
+        buf.insert(&mut end, "\n");
+
+        // Bound the scrollback so a very chatty run can't grow the buffer without
+        // limit; drop the oldest lines once we exceed the cap.
+        let lines = buf.line_count();
+        if lines > MAX_LOG_LINES {
+            let mut start = buf.start_iter();
+            if let Some(mut cut) = buf.iter_at_line(lines - MAX_LOG_LINES) {
+                buf.delete(&mut start, &mut cut);
+            }
+        }
+
+        // Scroll to the end without leaking an anonymous mark on every line.
+        let mut end = buf.end_iter();
+        self.log_view.scroll_to_iter(&mut end, 0.0, false, 0.0, 0.0);
     }
 }
 
