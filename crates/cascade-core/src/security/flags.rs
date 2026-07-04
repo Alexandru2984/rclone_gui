@@ -67,4 +67,45 @@ mod tests {
     fn nul_byte_rejected() {
         assert!(parse("--flag\0bad").is_err());
     }
+
+    #[test]
+    fn collapses_runs_of_whitespace() {
+        assert_eq!(
+            parse("--a    --b\t\t--c").unwrap(),
+            vec!["--a", "--b", "--c"]
+        );
+    }
+
+    #[test]
+    fn keeps_equals_and_braces_as_one_token() {
+        assert_eq!(
+            parse("--exclude={*.tmp,*.log}").unwrap(),
+            vec!["--exclude={*.tmp,*.log}"]
+        );
+    }
+
+    #[test]
+    fn preserves_unicode_values() {
+        assert_eq!(
+            parse("--dest 'Café/Ünïcode'").unwrap(),
+            vec!["--dest", "Café/Ünïcode"]
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_whitespace_ignored() {
+        assert_eq!(
+            parse("   --flag value   ").unwrap(),
+            vec!["--flag", "value"]
+        );
+    }
+
+    #[test]
+    fn mismatched_quote_kinds_are_ok() {
+        // A single quote inside double quotes is a literal.
+        assert_eq!(
+            parse(r#"--x "it's fine""#).unwrap(),
+            vec!["--x", "it's fine"]
+        );
+    }
 }

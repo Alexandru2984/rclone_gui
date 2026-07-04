@@ -306,4 +306,110 @@ mod tests {
         assert!(!is_remote_endpoint("./relative/path"));
         assert!(!is_remote_endpoint("/has/colon:in/path"));
     }
+
+    #[test]
+    fn remote_endpoint_edge_cases() {
+        // A leading colon is not a remote name (empty name before ':').
+        assert!(!is_remote_endpoint(":nope"));
+        // No colon at all.
+        assert!(!is_remote_endpoint("plainname"));
+        assert!(!is_remote_endpoint(""));
+        // Multiple colons: the first one (at a valid position) wins.
+        assert!(is_remote_endpoint("remote:path:with:colons"));
+        // A relative path with a colon in a later component is still local.
+        assert!(!is_remote_endpoint("dir/sub:name"));
+    }
+
+    #[test]
+    fn dotdot_only_matches_whole_component() {
+        // A literal ".." component is refused...
+        assert!(matches!(
+            validate("/a/../b"),
+            Err(CoreError::DangerousPath(_))
+        ));
+        // ...but ".." as part of a longer name is fine (e.g. "..config").
+        assert_eq!(validate("/home/tester/..config").unwrap(), PathVerdict::Ok);
+        assert_eq!(validate("/data/a..b/c").unwrap(), PathVerdict::Ok);
+    }
+
+    #[test]
+    fn trailing_and_repeated_slashes_normalize() {
+        // Repeated trailing slashes collapse to the bare root and are refused.
+        assert!(matches!(validate("////"), Err(CoreError::DangerousPath(_))));
+        // A normal path keeps its verdict regardless of a trailing slash.
+        assert_eq!(validate("/srv/data///").unwrap(), PathVerdict::Ok);
+    }
+
+    #[test]
+    fn tabs_and_newlines_are_trimmed_to_empty() {
+        assert!(matches!(validate("\t\n  "), Err(CoreError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn system_dir_prefix_is_not_confused_with_sibling() {
+        // "/usrlocal" must NOT be treated as under "/usr".
+        assert_eq!(validate("/usrlocal/data").unwrap(), PathVerdict::Ok);
+        // But "/usr/local" is under "/usr" and warns.
+        assert!(matches!(validate("/usr/local"), Ok(PathVerdict::Warn(_))));
+    }
+
+    #[test]
+    fn overlap_none_has_no_warning() {
+        assert_eq!(Overlap::None.warning(), None);
+        assert!(Overlap::Identical.warning().is_some());
+        assert!(Overlap::DestInsideSource.warning().is_some());
+        assert!(Overlap::SourceInsideDest.warning().is_some());
+    }
+
+    #[test]
+    fn overlap_is_symmetric_in_shape() {
+        // Swapping src/dst must flip DestInsideSource <-> SourceInsideDest.
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().to_str().unwrap().to_string();
+        let inner = dir.path().join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let inner = inner.to_str().unwrap();
+        assert_eq!(check_overlap(&outer, inner), Overlap::DestInsideSource);
+        assert_eq!(check_overlap(inner, &outer), Overlap::SourceInsideDest);
+    }
+
+    #[test]
+    fn overlap_identical_remotes() {
+        assert_eq!(
+            check_overlap("gdrive:Photos", "gdrive:Photos"),
+            Overlap::Identical
+        );
+        // Trailing slash on a remote path is normalized away.
+        assert_eq!(
+            check_overlap("gdrive:Photos/", "gdrive:Photos"),
+            Overlap::Identical
+        );
+    }
+
+    #[test]
+    fn overlap_unrelated_paths_are_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("alpha");
+        let b = dir.path().join("beta");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert_eq!(
+            check_overlap(a.to_str().unwrap(), b.to_str().unwrap()),
+            Overlap::None
+        );
+    }
+
+    #[test]
+    fn overlap_nonexistent_paths_compare_lexically() {
+        // Neither path exists, so canonicalization falls back to the literal
+        // form; the check must still catch a nested destination.
+        assert_eq!(
+            check_overlap("/no/such/root", "/no/such/root/child"),
+            Overlap::DestInsideSource
+        );
+        assert_eq!(
+            check_overlap("/no/such/root", "/no/such/other"),
+            Overlap::None
+        );
+    }
 }

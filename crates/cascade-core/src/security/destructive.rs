@@ -95,4 +95,35 @@ mod tests {
         assert!(classify(Operation::Copy, false).recommends_dry_run());
         assert!(classify(Operation::Sync, true).recommends_dry_run());
     }
+
+    #[test]
+    fn bisync_is_always_destructive() {
+        // The delete flag is irrelevant for bisync — it can delete on both sides.
+        assert_eq!(classify(Operation::Bisync, false), RiskLevel::Destructive);
+        assert_eq!(classify(Operation::Bisync, true), RiskLevel::Destructive);
+        assert!(classify(Operation::Bisync, false).requires_confirmation());
+    }
+
+    #[test]
+    fn mount_is_safe() {
+        assert_eq!(classify(Operation::Mount, false), RiskLevel::Safe);
+        assert!(!classify(Operation::Mount, false).requires_confirmation());
+    }
+
+    #[test]
+    fn risk_levels_are_ordered() {
+        assert!(RiskLevel::Safe < RiskLevel::Caution);
+        assert!(RiskLevel::Caution < RiskLevel::Destructive);
+        // Only Destructive needs confirmation.
+        assert!(!RiskLevel::Safe.requires_confirmation());
+        assert!(!RiskLevel::Caution.requires_confirmation());
+        assert!(RiskLevel::Destructive.requires_confirmation());
+    }
+
+    #[test]
+    fn copy_delete_flag_does_not_change_copy_classification() {
+        // Copy is Caution regardless of the delete_enabled hint (which only
+        // affects Sync); JobSpec handles Copy+delete escalation separately.
+        assert_eq!(classify(Operation::Copy, true), RiskLevel::Caution);
+    }
 }

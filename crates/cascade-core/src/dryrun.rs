@@ -204,4 +204,66 @@ mod tests {
         assert_eq!(DryRunSummary::default().describe(), "no changes");
         assert!(DryRunSummary::default().is_empty());
     }
+
+    #[test]
+    fn rsync_receive_direction_new_file_is_added() {
+        // '<' (receiving) is as valid as '>' (sending) for a transfer.
+        assert_eq!(
+            classify_rsync("<f+++++++++ incoming.bin"),
+            Some(Change::Added)
+        );
+    }
+
+    #[test]
+    fn rsync_non_regular_files_are_ignored() {
+        // Symlink (L) and device/other types are not counted as file changes.
+        assert_eq!(classify_rsync(">L+++++++++ link -> target"), None);
+        assert_eq!(classify_rsync("cL+++++++++ newlink"), None);
+    }
+
+    #[test]
+    fn rsync_short_or_dotprefixed_lines_are_ignored() {
+        // Too short to hold the 11-char itemize code + a filename.
+        assert_eq!(classify_rsync(">f+++++++++"), None);
+        // A no-op itemize line (leading '.') is not a content change.
+        assert_eq!(classify_rsync(".f          unchanged.txt"), None);
+    }
+
+    #[test]
+    fn rclone_move_counts_as_added() {
+        assert_eq!(
+            classify_rclone("NOTICE: x: Skipped move as --dry-run is set"),
+            Some(Change::Added)
+        );
+    }
+
+    #[test]
+    fn rclone_priority_prefixed_lines_still_parse() {
+        // journald-style "<5>" priority prefix must not defeat matching.
+        assert_eq!(
+            classify_rclone("<5>NOTICE: a: Skipped delete as --dry-run is set (size 6)"),
+            Some(Change::Deleted)
+        );
+    }
+
+    #[test]
+    fn describe_single_categories() {
+        let mut only_del = DryRunSummary::default();
+        only_del.record(Change::Deleted);
+        only_del.record(Change::Deleted);
+        assert_eq!(only_del.describe(), "2 to delete");
+
+        let mut only_new = DryRunSummary::default();
+        only_new.record(Change::Added);
+        assert_eq!(only_new.describe(), "1 new");
+    }
+
+    #[test]
+    fn record_line_ignores_wrong_tool_format() {
+        // An rclone-style line fed as rsync (and vice-versa) must not miscount.
+        let mut s = DryRunSummary::default();
+        s.record_line(Tool::Rsync, "NOTICE: x: Skipped copy as --dry-run is set");
+        s.record_line(Tool::Rclone, ">f+++++++++ file");
+        assert!(s.is_empty(), "cross-tool lines must not be counted");
+    }
 }

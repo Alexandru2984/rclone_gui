@@ -176,4 +176,70 @@ mod tests {
     fn rclone_non_stats_line_is_none() {
         assert!(parse_rclone("2024/01/01 INFO  : something happened").is_none());
     }
+
+    #[test]
+    fn rsync_gigabyte_rate_and_clock_eta() {
+        let p = parse_rsync("1,000,000  50%  1.50GB/s  1:00:00").unwrap();
+        assert_eq!(p.bytes_transferred, 1_000_000);
+        assert_eq!(p.percent, Some(50.0));
+        assert_eq!(p.eta_secs, Some(3600));
+        // ~1.5 GiB/s.
+        let s = p.speed_bps.unwrap();
+        assert!(s > 1_600_000_000 && s < 1_620_000_000, "rate was {s}");
+    }
+
+    #[test]
+    fn rsync_line_without_eta_parses() {
+        let p = parse_rsync("2,048  10%  5.00kB/s").unwrap();
+        assert_eq!(p.bytes_transferred, 2_048);
+        assert_eq!(p.percent, Some(10.0));
+        assert_eq!(p.eta_secs, None);
+    }
+
+    #[test]
+    fn rsync_bare_bytes_per_second_has_unit_factor_one() {
+        let p = parse_rsync("512  0%  256.00B/s  0:00:10").unwrap();
+        assert_eq!(p.speed_bps, Some(256));
+        assert_eq!(p.eta_secs, Some(10));
+    }
+
+    #[test]
+    fn rclone_bytes_unit_and_minute_eta() {
+        let p = parse_rclone("Transferred: 500 B / 1 KiB, 50%, 100 B/s, ETA 1m").unwrap();
+        assert_eq!(p.bytes_transferred, 500);
+        assert_eq!(p.speed_bps, Some(100));
+        assert_eq!(p.eta_secs, Some(60));
+    }
+
+    #[test]
+    fn rclone_tebibyte_and_compound_eta() {
+        let p = parse_rclone("Transferred: 1.000 TiB / 2.000 TiB, 50%, 1.000 GiB/s, ETA 1h2m3s")
+            .unwrap();
+        assert_eq!(p.bytes_transferred, 1024u64.pow(4));
+        assert_eq!(p.speed_bps, Some(1024u64.pow(3)));
+        assert_eq!(p.eta_secs, Some(3723));
+    }
+
+    #[test]
+    fn rclone_without_eta_field_parses() {
+        let p = parse_rclone("Transferred: 1 B / 2 B, 50%, 1 B/s").unwrap();
+        assert_eq!(p.percent, Some(50.0));
+        assert_eq!(p.eta_secs, None);
+    }
+
+    #[test]
+    fn empty_and_garbage_lines_are_none() {
+        assert!(parse_rsync("").is_none());
+        assert!(parse_rclone("").is_none());
+        assert!(parse_rsync("no numbers here at all").is_none());
+        // Looks like a stats line but lacks a percentage.
+        assert!(parse_rclone("Transferred: 1 B / 2 B").is_none());
+    }
+
+    #[test]
+    fn percent_never_exceeds_expectation() {
+        // 100% completion line must clamp cleanly to a real percent value.
+        let p = parse_rsync("4,096 100% 0.00kB/s 0:00:00").unwrap();
+        assert_eq!(p.percent, Some(100.0));
+    }
 }

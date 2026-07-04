@@ -275,6 +275,69 @@ mod tests {
     }
 
     #[test]
+    fn unit_id_edge_cases() {
+        // Non-ASCII and punctuation become dashes, which collapse and trim; only
+        // ASCII alphanumerics survive.
+        assert_eq!(unit_id("Ünïcode → Bäckup!!!"), "n-code-b-ckup");
+        // Digits and underscores/dashes are preserved.
+        assert_eq!(unit_id("job_42-v2"), "job_42-v2");
+        // Uppercase is lowercased.
+        assert_eq!(unit_id("BACKUP"), "backup");
+        // Empty / all-separators fall back to "job".
+        assert_eq!(unit_id(""), "job");
+        assert_eq!(unit_id("   "), "job");
+        assert_eq!(unit_id("///"), "job");
+    }
+
+    #[test]
+    fn systemd_quote_empty_string_is_quoted() {
+        // An empty arg must not vanish; it becomes an explicit empty quoted arg.
+        assert_eq!(systemd_quote(""), "\"\"");
+    }
+
+    #[test]
+    fn notify_instance_slugifies_the_name() {
+        assert_eq!(
+            notify_instance_for("My Nightly Job"),
+            "cascade-notify@my-nightly-job.service"
+        );
+        assert_eq!(NOTIFY_UNIT_FILE, "cascade-notify@.service");
+    }
+
+    #[test]
+    fn notify_unit_quotes_a_spacey_notify_path() {
+        let unit = build_notify_unit("/opt/my tools/notify-send", "Failed");
+        assert!(unit.contains("ExecStart=\"/opt/my tools/notify-send\" Failed %i"));
+    }
+
+    #[test]
+    fn parse_on_calendar_trims_and_handles_absence() {
+        assert_eq!(
+            parse_on_calendar("[Timer]\nOnCalendar=   *-*-* 02:00:00  \n").as_deref(),
+            Some("*-*-* 02:00:00")
+        );
+        assert_eq!(parse_on_calendar("").as_deref(), None);
+        assert_eq!(parse_on_calendar("OnCalendarish=weekly").as_deref(), None);
+    }
+
+    #[test]
+    fn timer_always_has_persistent_and_install() {
+        let u = build_units("j", "/bin/true", &[], "hourly", None);
+        assert!(u.timer.contains("Persistent=true"));
+        assert!(u.timer.contains("[Install]"));
+        assert!(u.timer.contains("WantedBy=timers.target"));
+    }
+
+    #[test]
+    fn exec_start_quotes_only_args_that_need_it() {
+        let argv = vec!["copy".into(), "/plain".into(), "has space".into()];
+        let u = build_units("j", "/usr/bin/rclone", &argv, "daily", None);
+        assert!(u
+            .service
+            .contains("ExecStart=/usr/bin/rclone copy /plain \"has space\""));
+    }
+
+    #[test]
     fn description_strips_control_chars() {
         let u = build_units(
             "evil\n[Service]\nExecStart=/bin/rm",

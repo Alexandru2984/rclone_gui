@@ -111,4 +111,76 @@ mod tests {
         let line = "Transferred: 1.2 GiB / 4.0 GiB, 30%, 12 MiB/s, ETA 3m";
         assert_eq!(redact(line), line);
     }
+
+    #[test]
+    fn redacts_multiple_secrets_in_one_line() {
+        let line = "--password hunter2 --token abc.def --rc-pass=zzz keep-me";
+        let out = redact(line);
+        assert!(!out.contains("hunter2"));
+        assert!(!out.contains("abc.def"));
+        assert!(!out.contains("zzz"));
+        assert!(out.contains("keep-me"), "non-secret text must survive");
+    }
+
+    #[test]
+    fn redacts_each_known_flag_family() {
+        for flag in [
+            "--password X1Y2",
+            "--pass X1Y2",
+            "--rc-pass X1Y2",
+            "--rc-user X1Y2",
+            "--token X1Y2",
+            "--client-secret X1Y2",
+            "--sftp-pass X1Y2",
+            "--sa-credentials X1Y2",
+        ] {
+            assert!(!redact(flag).contains("X1Y2"), "leaked: {flag}");
+        }
+    }
+
+    #[test]
+    fn redaction_is_case_insensitive() {
+        assert!(!redact("--PASSWORD hunter2").contains("hunter2"));
+        assert!(!redact("Authorization: BEARER eyToken").contains("eyToken"));
+    }
+
+    #[test]
+    fn redacts_url_credentials_with_special_password() {
+        // Password contains characters that must not confuse the regex.
+        let line = "ftp://bob:p%40ss.w0rd!@host/path";
+        let out = redact(line);
+        assert!(!out.contains("p%40ss.w0rd!"));
+        assert!(out.contains("bob:«redacted»@"));
+        // The non-secret host/path is preserved.
+        assert!(out.contains("@host/path"));
+    }
+
+    #[test]
+    fn redacts_access_and_refresh_tokens() {
+        assert!(!redact(r#""access_token":"ya29.abcDEF-123""#).contains("ya29.abcDEF-123"));
+        assert!(!redact("refresh_token=1//0gWxyz_-.").contains("1//0gWxyz_-."));
+    }
+
+    #[test]
+    fn empty_and_whitespace_are_unchanged() {
+        assert_eq!(redact(""), "");
+        assert_eq!(redact("   \t"), "   \t");
+    }
+
+    #[test]
+    fn redacts_pem_embedded_in_surrounding_text() {
+        let line =
+            "before -----BEGIN RSA PRIVATE KEY-----\nSECRET\n-----END RSA PRIVATE KEY----- after";
+        let out = redact(line);
+        assert!(!out.contains("SECRET"));
+        assert!(out.contains("before "));
+        assert!(out.contains(" after"));
+    }
+
+    #[test]
+    fn does_not_redact_plain_words_resembling_flags() {
+        // A word like "password" in prose (no flag prefix / value) is untouched.
+        let line = "the password policy requires 12 characters";
+        assert_eq!(redact(line), line);
+    }
 }
