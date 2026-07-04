@@ -25,6 +25,9 @@ struct Item {
     cancel: gtk::Button,
     handle: Option<RunHandle>,
     done: bool,
+    /// True once the job has been launched; launched/running jobs are not
+    /// persisted, so a crash mid-run won't silently re-queue them.
+    launched: bool,
 }
 
 #[derive(Clone)]
@@ -124,6 +127,8 @@ impl QueueView {
             });
         }
         view.refresh_empty();
+        // Restore and resume any queue left pending from a previous session.
+        view.load_persisted();
         view
     }
 
@@ -190,11 +195,42 @@ impl QueueView {
                 cancel,
                 handle: None,
                 done: false,
+                launched: false,
             },
         );
         self.queue.borrow_mut().enqueue(id);
         self.refresh_empty();
+        self.persist();
         self.pump();
+    }
+
+    /// Mirror the still-pending (not yet launched) jobs to the store, in visual
+    /// order, so the queue survives a restart. Secret-bearing specs are skipped
+    /// — Cascade never persists credentials.
+    fn persist(&self) {
+        let items = self.items.borrow();
+        let mut pending: Vec<(i32, JobSpec)> = items
+            .values()
+            .filter(|it| !it.launched && !it.done && !it.spec.contains_secret())
+            .map(|it| (it.row.index(), it.spec.clone()))
+            .collect();
+        pending.sort_by_key(|(idx, _)| *idx);
+        let specs: Vec<JobSpec> = pending.into_iter().map(|(_, s)| s).collect();
+        if let Err(e) = self.ctx.store.queue_replace(&specs) {
+            tracing::warn!("could not persist the queue: {e}");
+        }
+    }
+
+    /// Reload any queue that was persisted from a previous session and resume it.
+    fn load_persisted(&self) {
+        match self.ctx.store.queue_list() {
+            Ok(specs) => {
+                for spec in specs {
+                    self.enqueue(spec);
+                }
+            }
+            Err(e) => tracing::warn!("could not load the persisted queue: {e}"),
+        }
     }
 
     fn pump(&self) {
@@ -216,6 +252,7 @@ impl QueueView {
                 self.list.remove(&it.row);
             }
             self.refresh_empty();
+            self.persist();
         }
     }
 
@@ -237,6 +274,7 @@ impl QueueView {
                 self.list.insert(&it.row, target);
             }
         }
+        self.persist();
     }
 
     fn launch(&self, id: u64) {
@@ -244,6 +282,12 @@ impl QueueView {
             Some(it) => (it.spec.clone(), it.row.clone(), it.cancel.clone()),
             None => return,
         };
+        // Once launched, the job is no longer pending: mark it and drop it from
+        // the persisted queue (so a crash mid-run won't re-queue it).
+        if let Some(it) = self.items.borrow_mut().get_mut(&id) {
+            it.launched = true;
+        }
+        self.persist();
 
         let argv = match spec.build_argv() {
             Ok(a) => a,

@@ -72,4 +72,13 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_job_runs_job ON job_runs(job_id);
     CREATE INDEX idx_run_logs_run ON run_logs(run_id);
     "#,
+    // v2 — persist pending queue items so the queue survives a restart.
+    r#"
+    CREATE TABLE queue_items (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        spec_json  TEXT NOT NULL,
+        position   INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+    );
+    "#,
 ];

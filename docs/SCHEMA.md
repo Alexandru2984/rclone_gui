@@ -89,11 +89,22 @@ Log lines metadata + the path to the on-disk sanitized log file.
 | log_path | TEXT NOT NULL | sanitized log file on disk |
 | level_counts_json | TEXT | {errors,warnings,info} tallies |
 
+### `queue_items` (v2)
+Pending Jobs-Queue entries, so the queue survives a restart. Rewritten as a set
+on every queue mutation; launched/running jobs and secret-bearing specs are
+never stored here.
+| column | type | notes |
+|---|---|---|
+| id | INTEGER PK AUTOINCREMENT | |
+| spec_json | TEXT NOT NULL | serialized `JobSpec` |
+| position | INTEGER NOT NULL | visual order (0-based) |
+| created_at | INTEGER NOT NULL | unix seconds |
+
 ## Relationships
 ```
 profiles 1───* jobs 1───* job_runs 1───1 run_logs
 assistant_templates ──(seeds)──▶ profiles/jobs
-settings, schema_version  (standalone)
+settings, schema_version, queue_items  (standalone)
 ```
 Full log *text* lives on disk (rotated files under the data dir); SQLite stores metadata
 and pointers, keeping the DB small and fast.

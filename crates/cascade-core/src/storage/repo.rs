@@ -205,6 +205,43 @@ impl Store {
         Ok(())
     }
 
+    /// Replace the persisted pending-queue with `specs`, in order.
+    ///
+    /// Called on every queue mutation so the on-disk copy always mirrors the
+    /// still-pending jobs. Secret-bearing specs are the caller's responsibility
+    /// to exclude — Cascade never persists credentials (see the threat model).
+    pub fn queue_replace(&self, specs: &[JobSpec]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM queue_items", [])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO queue_items (spec_json, position, created_at) VALUES (?1, ?2, ?3)",
+            )?;
+            let ts = now();
+            for (i, spec) in specs.iter().enumerate() {
+                let json = serde_json::to_string(spec)?;
+                stmt.execute(params![json, i as i64, ts])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Load the persisted pending-queue specs, in saved order.
+    pub fn queue_list(&self) -> Result<Vec<JobSpec>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT spec_json FROM queue_items ORDER BY position, id")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Ok(spec) = serde_json::from_str::<JobSpec>(&row?) {
+                out.push(spec);
+            }
+        }
+        Ok(out)
+    }
+
     /// Most recent runs, newest first, for the History screen.
     pub fn recent_runs(&self, limit: i64) -> Result<Vec<RunRecord>> {
         let mut stmt = self.conn.prepare(
@@ -374,6 +411,43 @@ mod tests {
             Some("/tmp/run-1.log")
         );
         assert_eq!(store.run_log_path(9999).unwrap(), None);
+    }
+
+    #[test]
+    fn queue_persists_and_reloads_in_order() {
+        use crate::job::OpKind;
+        use crate::Tool;
+
+        let store = Store::open_in_memory().unwrap();
+        let mk = |name: &str, op: OpKind| JobSpec {
+            name: name.into(),
+            tool: Tool::Rsync,
+            op,
+            source: "/src/".into(),
+            destination: "/dst/".into(),
+            dry_run: false,
+            delete: false,
+            options: Default::default(),
+        };
+
+        store
+            .queue_replace(&[mk("first", OpKind::Copy), mk("second", OpKind::Sync)])
+            .unwrap();
+        let loaded = store.queue_list().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].name, "first");
+        assert_eq!(loaded[1].name, "second");
+        assert_eq!(loaded[1].op, OpKind::Sync);
+
+        // Replacing with a shorter list clears the rest (no leftover rows).
+        store.queue_replace(&[mk("only", OpKind::Copy)]).unwrap();
+        let loaded = store.queue_list().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "only");
+
+        // An empty replace drains the queue.
+        store.queue_replace(&[]).unwrap();
+        assert!(store.queue_list().unwrap().is_empty());
     }
 
     #[test]

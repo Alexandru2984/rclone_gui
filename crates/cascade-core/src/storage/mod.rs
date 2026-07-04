@@ -132,11 +132,11 @@ mod tests {
             .conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
-                 ('settings','profiles','assistant_templates','jobs','job_runs','run_logs')",
+                 ('settings','profiles','assistant_templates','jobs','job_runs','run_logs','queue_items')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
     }
 }
