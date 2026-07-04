@@ -27,8 +27,8 @@ impl Rcd {
     pub fn start() -> std::io::Result<Self> {
         let port = free_loopback_port()?;
         let addr = format!("127.0.0.1:{port}");
-        let user = format!("cascade-{}", random_hex(4));
-        let pass = random_hex(24);
+        let user = format!("cascade-{}", random_hex(4)?);
+        let pass = random_hex(24)?;
         let args = vec!["rcd".to_string(), format!("--rc-addr={addr}")];
         let envs = vec![
             ("RCLONE_RC_USER".to_string(), user.clone()),
@@ -85,12 +85,14 @@ fn free_loopback_port() -> std::io::Result<u16> {
 }
 
 /// `n` random bytes from the OS CSPRNG, hex-encoded.
-fn random_hex(n: usize) -> String {
+///
+/// Fails loudly if the CSPRNG can't be read: a silent fallback would hand the
+/// RC daemon an all-zero (guessable) password, which for a credential-guarding
+/// tool is worse than refusing to start.
+fn random_hex(n: usize) -> std::io::Result<String> {
     let mut buf = vec![0u8; n];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-    }
-    buf.iter().map(|b| format!("{b:02x}")).collect()
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut buf)?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -134,7 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn random_hex_has_expected_length() {
-        assert_eq!(random_hex(8).len(), 16);
+    fn random_hex_has_expected_length_and_is_not_all_zero() {
+        let hex = random_hex(24).unwrap();
+        assert_eq!(hex.len(), 48);
+        // Astronomically unlikely to be all zeros unless the CSPRNG read failed
+        // silently — which this function no longer allows.
+        assert_ne!(hex, "0".repeat(48));
     }
 }
