@@ -61,6 +61,15 @@
   </developer>
 
   <releases>
+    <release version="0.1.1" date="2026-07-04">
+      <description>
+        <p>Safety and features: two-way bisync, a max-delete guard, a backup
+        directory for reversible sync, a structured dry-run summary, a persisted
+        job queue, desktop notifications for failed scheduled jobs, and re-run
+        from history. Fixes the queue confirmation gate and adds
+        source/destination overlap detection.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-06-22">
       <description>
         <p>Initial development release: core pipeline, New Job flow, live

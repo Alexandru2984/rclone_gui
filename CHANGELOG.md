@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-04
+
 ### Added
 - **Two-way sync** via rclone `bisync`, with a `--resync` first-run toggle.
 - **`--max-delete` safety net** — abort a run that would delete more than N files.
@@ -59,5 +61,6 @@ First public release.
   (SIGTERM before SIGKILL). Output is bounded to prevent OOM.
 - systemd unit generation is hardened against specifier/newline injection.
 
-[Unreleased]: https://github.com/Alexandru2984/rclone_gui/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Alexandru2984/rclone_gui/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Alexandru2984/rclone_gui/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Alexandru2984/rclone_gui/releases/tag/v0.1.0
