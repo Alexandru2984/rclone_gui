@@ -5,15 +5,61 @@
 //! line streaming, and the on-disk result. They require `rsync` on PATH (always
 //! present on Linux dev machines and CI runners).
 
+use std::path::Path;
 use std::sync::Arc;
 
 use cascade_core::dryrun::DryRunSummary;
 use cascade_core::job::{AdvancedOptions, JobSpec, OpKind};
-use cascade_core::process::{progress, spawn_with_parser, ProcessEvent};
+use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent};
 use cascade_core::Tool;
 
 fn rsync_available() -> bool {
     cascade_core::rsync::detect().is_some()
+}
+
+fn rclone_available() -> bool {
+    cascade_core::rclone::detect().is_some()
+}
+
+/// Build an rclone spec over two local paths (no remote config needed — rclone's
+/// `local` backend handles bare filesystem paths).
+fn rclone_spec(op: OpKind, src: &Path, dst: &Path) -> JobSpec {
+    JobSpec {
+        name: "rc".into(),
+        tool: Tool::Rclone,
+        op,
+        source: src.display().to_string(),
+        destination: dst.display().to_string(),
+        dry_run: false,
+        delete: false,
+        options: AdvancedOptions::default(),
+    }
+}
+
+/// Run any spec (rsync or rclone) to completion, picking the matching progress
+/// parser, and fold every output line into a `DryRunSummary`.
+fn run_any(spec: &JobSpec) -> (bool, DryRunSummary) {
+    let argv = spec.build_argv().expect("valid argv");
+    let parser: LineParser = match spec.tool {
+        Tool::Rsync => Arc::new(progress::parse_rsync),
+        Tool::Rclone => Arc::new(progress::parse_rclone),
+    };
+    let handle = spawn_with_parser(spec.binary(), argv, Some(parser));
+    let mut summary = DryRunSummary::default();
+    let mut success = false;
+    while let Ok(ev) = handle.events.recv_blocking() {
+        match ev {
+            ProcessEvent::Stdout(l) | ProcessEvent::Stderr(l) => {
+                summary.record_line(spec.tool, &l);
+            }
+            ProcessEvent::Finished { success: ok, .. } => {
+                success = ok;
+                break;
+            }
+            _ => {}
+        }
+    }
+    (success, summary)
 }
 
 fn copy_spec(src: &std::path::Path, dst: &std::path::Path, dry_run: bool) -> JobSpec {
@@ -193,6 +239,147 @@ fn sync_delete_removes_destination_only_files() {
         !dst.join("stale.txt").exists(),
         "a destination-only file must be deleted by a mirror"
     );
+}
+
+// --- rclone integration (guarded; skips where rclone is not installed, e.g. CI) ---
+
+#[test]
+fn rclone_copy_transfers_files() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(src.join("a.txt"), b"hello rclone").unwrap();
+
+    let (success, _) = run_any(&rclone_spec(OpKind::Copy, &src, &dst));
+    assert!(success, "rclone copy should exit 0");
+    assert_eq!(std::fs::read(dst.join("a.txt")).unwrap(), b"hello rclone");
+}
+
+#[test]
+fn rclone_sync_dry_run_summary_counts_changes() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(src.join("new.txt"), b"fresh").unwrap();
+    std::fs::write(dst.join("extra.txt"), b"remove me").unwrap();
+
+    let mut spec = rclone_spec(OpKind::Sync, &src, &dst);
+    spec.dry_run = true;
+    let (success, summary) = run_any(&spec);
+    assert!(success, "rclone sync --dry-run should exit 0");
+    // rclone labels a would-be transfer "copy" and a removal "delete".
+    assert!(summary.added >= 1, "expected a copied file: {summary:?}");
+    assert!(summary.deleted >= 1, "expected a deletion: {summary:?}");
+    // The real destination is untouched by a dry-run.
+    assert!(dst.join("extra.txt").exists());
+    assert!(!dst.join("new.txt").exists());
+}
+
+#[test]
+fn rclone_max_delete_aborts_a_runaway_mirror() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(src.join("keep.txt"), b"keep").unwrap();
+    // Four destination-only files, but a max-delete of 1.
+    for f in ["a", "b", "c", "d"] {
+        std::fs::write(dst.join(format!("extra_{f}.txt")), b"x").unwrap();
+    }
+
+    let mut spec = rclone_spec(OpKind::Sync, &src, &dst);
+    spec.options.max_delete = Some(1);
+    let (success, _) = run_any(&spec);
+
+    // The guard must abort the run instead of wiping the destination.
+    assert!(
+        !success,
+        "sync should fail once the max-delete threshold is hit"
+    );
+    let remaining = std::fs::read_dir(&dst)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("extra_"))
+        .count();
+    assert!(
+        remaining >= 1,
+        "the max-delete guard should have stopped a full wipe"
+    );
+}
+
+#[test]
+fn rclone_backup_dir_moves_instead_of_deleting() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    let bak = dir.path().join("bak");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(src.join("keep.txt"), b"keep").unwrap();
+    std::fs::write(dst.join("stale.txt"), b"old").unwrap();
+
+    let mut spec = rclone_spec(OpKind::Sync, &src, &dst);
+    spec.options.backup_dir = Some(bak.display().to_string());
+    let (success, _) = run_any(&spec);
+    assert!(success, "rclone sync with --backup-dir should exit 0");
+
+    // The stale file is moved aside, not destroyed — a reversible sync.
+    assert!(
+        !dst.join("stale.txt").exists(),
+        "stale file should leave dst"
+    );
+    assert!(
+        bak.join("stale.txt").exists(),
+        "stale file should be preserved in the backup dir"
+    );
+    assert!(dst.join("keep.txt").exists());
+}
+
+#[test]
+fn rclone_bisync_resync_merges_both_sides() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("one.txt"), b"1").unwrap();
+    std::fs::write(b.join("two.txt"), b"2").unwrap();
+
+    let mut spec = rclone_spec(OpKind::Bisync, &a, &b);
+    spec.options.resync = true; // first run establishes the baseline
+    let (success, _) = run_any(&spec);
+    assert!(success, "bisync --resync should exit 0");
+
+    // After a resync both sides hold the union of the files.
+    for side in [&a, &b] {
+        assert!(side.join("one.txt").exists(), "one.txt missing on a side");
+        assert!(side.join("two.txt").exists(), "two.txt missing on a side");
+    }
 }
 
 #[test]
