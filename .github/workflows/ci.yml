@@ -59,6 +59,27 @@ jobs:
             fi
           '
 
+  coverage:
+    name: coverage (cascade-core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - name: Install rsync + rclone (exercise the real tool paths)
+        run: |
+          sudo apt-get update && sudo apt-get install -y rsync
+          curl https://rclone.org/install.sh | sudo bash
+      - name: Measure coverage and fail under 90% lines
+        run: |
+          # pipefail so the coverage gate's exit code isn't masked by `tee`.
+          set -o pipefail
+          cargo llvm-cov -p cascade-core --summary-only --fail-under-lines 90 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
   packaging:
     name: packaging (desktop + appstream)
     runs-on: ubuntu-latest
