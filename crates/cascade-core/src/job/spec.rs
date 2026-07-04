@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::rclone::command::{self as rclone_cmd, RcloneOp, RcloneOptions};
 use crate::rsync::command::{build_args as rsync_args, RsyncOptions};
 use crate::security::destructive::{classify, Operation, RiskLevel};
@@ -23,6 +23,8 @@ pub enum OpKind {
     Sync,
     /// Move files (removes them from the source).
     Move,
+    /// Two-way sync (rclone `bisync`); keeps both sides in step. rclone only.
+    Bisync,
 }
 
 impl OpKind {
@@ -31,6 +33,7 @@ impl OpKind {
             OpKind::Copy => Operation::Copy,
             OpKind::Sync => Operation::Sync,
             OpKind::Move => Operation::Move,
+            OpKind::Bisync => Operation::Bisync,
         }
     }
 
@@ -39,6 +42,7 @@ impl OpKind {
             OpKind::Copy => "Copy",
             OpKind::Sync => "Sync (mirror)",
             OpKind::Move => "Move",
+            OpKind::Bisync => "Bisync (two-way)",
         }
     }
 }
@@ -70,6 +74,8 @@ pub struct AdvancedOptions {
     pub compress: bool,
     /// rsync SSH transport port (`-e "ssh -p N"`).
     pub ssh_port: Option<u16>,
+    /// bisync only: establish the baseline on the first run (rclone `--resync`).
+    pub resync: bool,
     /// Already-tokenized custom flags (validated by `security::flags`).
     pub extra_flags: Vec<String>,
 }
@@ -97,6 +103,7 @@ impl JobSpec {
         match self.op {
             OpKind::Sync => true,
             OpKind::Move => true,
+            OpKind::Bisync => true,
             OpKind::Copy => self.delete,
         }
     }
@@ -147,6 +154,7 @@ impl JobSpec {
                     OpKind::Copy => RcloneOp::Copy,
                     OpKind::Sync => RcloneOp::Sync,
                     OpKind::Move => RcloneOp::Move,
+                    OpKind::Bisync => RcloneOp::Bisync,
                 };
                 let opts = RcloneOptions {
                     dry_run: self.dry_run,
@@ -159,12 +167,18 @@ impl JobSpec {
                     backup_dir: o.backup_dir.clone(),
                     excludes: o.excludes.clone(),
                     includes: o.includes.clone(),
+                    resync: o.resync,
                     extra_flags: o.extra_flags.clone(),
                     ..Default::default()
                 };
                 rclone_cmd::build_args(op, &self.source, Some(&self.destination), &opts)
             }
             Tool::Rsync => {
+                if self.op == OpKind::Bisync {
+                    return Err(CoreError::InvalidCommand(
+                        "two-way sync (bisync) is available with rclone only".into(),
+                    ));
+                }
                 let mut extra_flags = o.extra_flags.clone();
                 if o.checksum {
                     extra_flags.push("--checksum".into());
@@ -313,6 +327,31 @@ mod tests {
         assert!(argv.contains(&"-z".to_string()));
         assert!(argv.contains(&"--checksum".to_string()));
         assert!(joined.contains("ssh -p 2222"));
+    }
+
+    #[test]
+    fn rclone_bisync_builds_bisync_argv_and_is_destructive() {
+        let mut s = spec(Tool::Rclone, OpKind::Bisync);
+        s.options.resync = true;
+        let argv = s.build_argv().unwrap();
+        assert_eq!(argv[0], "bisync");
+        assert_eq!(&argv[1..3], &["/src/".to_string(), "/dst/".to_string()]);
+        assert!(argv.contains(&"--resync".to_string()));
+        assert_eq!(s.risk(), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn rsync_bisync_is_rejected() {
+        let s = spec(Tool::Rsync, OpKind::Bisync);
+        assert!(s.build_argv().is_err());
+    }
+
+    #[test]
+    fn resync_only_applies_to_bisync() {
+        // --resync must not leak onto a plain sync even if the flag is set.
+        let mut s = spec(Tool::Rclone, OpKind::Sync);
+        s.options.resync = true;
+        assert!(!s.build_argv().unwrap().contains(&"--resync".to_string()));
     }
 
     #[test]

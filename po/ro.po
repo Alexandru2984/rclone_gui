@@ -268,3 +268,9 @@ msgstr "Director de backup pentru fișierele înlocuite/șterse (sincronizare re
 
 msgid "Scheduled backup failed"
 msgstr "Copierea de rezervă programată a eșuat"
+
+msgid "Bisync (two-way)"
+msgstr "Bisync (bidirecțional)"
+
+msgid "First bisync run — establish baseline (--resync)"
+msgstr "Prima rulare bisync — stabilește baza de referință (--resync)"

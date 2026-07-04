@@ -48,6 +48,7 @@ struct Inputs {
     adv_ssh_port: adw::SpinRow,
     adv_max_delete: adw::SpinRow,
     adv_backup_dir: adw::EntryRow,
+    adv_resync: adw::SwitchRow,
     adv_custom: adw::EntryRow,
 
     preview: gtk::Label,
@@ -133,6 +134,7 @@ pub fn build(
         crate::i18n::tr("Copy"),
         crate::i18n::tr("Sync (mirror)"),
         crate::i18n::tr("Move"),
+        crate::i18n::tr("Bisync (two-way)"),
     ];
     op.set_model(Some(&gtk::StringList::new(
         &op_labels.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -218,6 +220,9 @@ pub fn build(
             "Backup directory for replaced/deleted files (reversible sync)",
         ))
         .build();
+    let adv_resync = adw::SwitchRow::builder()
+        .title(crate::i18n::tr("First bisync run — establish baseline (--resync)"))
+        .build();
     let adv_custom = adw::EntryRow::builder()
         .title(crate::i18n::tr("Custom flags (quoted, space-separated)"))
         .build();
@@ -242,6 +247,7 @@ pub fn build(
     advanced.add_row(&adv_max_delete);
     advanced.add_row(&adv_checksum);
     advanced.add_row(&adv_compress);
+    advanced.add_row(&adv_resync);
     let adv_group = adw::PreferencesGroup::new();
     adv_group.add(&advanced);
 
@@ -365,6 +371,7 @@ pub fn build(
         adv_ssh_port,
         adv_max_delete,
         adv_backup_dir,
+        adv_resync,
         adv_custom,
         preview,
         risk,
@@ -474,6 +481,7 @@ impl Inputs {
         on!(self.adv_max_delete, connect_value_notify);
         on!(self.adv_checksum, connect_active_notify);
         on!(self.adv_compress, connect_active_notify);
+        on!(self.adv_resync, connect_active_notify);
 
         // Add + wire a folder-picker button onto each path row.
         connect_browse(self, &self.source);
@@ -522,6 +530,7 @@ impl Inputs {
             OpKind::Copy => 0,
             OpKind::Sync => 1,
             OpKind::Move => 2,
+            OpKind::Bisync => 3,
         });
         self.source.set_text(&spec.source);
         self.dest.set_text(&spec.destination);
@@ -542,6 +551,7 @@ impl Inputs {
         self.adv_checksum.set_active(o.checksum);
         self.adv_compress.set_active(o.compress);
         self.adv_ssh_port.set_value(o.ssh_port.unwrap_or(0) as f64);
+        self.adv_resync.set_active(o.resync);
         self.adv_custom.set_text(&o.extra_flags.join(" "));
 
         self.refresh_preview();
@@ -581,6 +591,7 @@ impl Inputs {
         let op = match self.op.selected() {
             1 => OpKind::Sync,
             2 => OpKind::Move,
+            3 => OpKind::Bisync,
             _ => OpKind::Copy,
         };
         let name = {
@@ -625,6 +636,7 @@ impl Inputs {
             checksum: self.adv_checksum.is_active(),
             compress: self.adv_compress.is_active(),
             ssh_port: spin_opt(&self.adv_ssh_port).map(|v| v as u16),
+            resync: self.adv_resync.is_active(),
             extra_flags,
         };
 
@@ -1076,6 +1088,7 @@ fn op_str(op: OpKind) -> &'static str {
         OpKind::Copy => "copy",
         OpKind::Sync => "sync",
         OpKind::Move => "move",
+        OpKind::Bisync => "bisync",
     }
 }
 

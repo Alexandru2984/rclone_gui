@@ -451,6 +451,7 @@ fn op_str(spec: &JobSpec) -> &'static str {
         Copy => "copy",
         Sync => "sync",
         Move => "move",
+        Bisync => "bisync",
     }
 }
 

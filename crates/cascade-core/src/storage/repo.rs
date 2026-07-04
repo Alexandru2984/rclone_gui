@@ -148,6 +148,7 @@ impl Store {
             crate::job::OpKind::Copy => "copy",
             crate::job::OpKind::Sync => "sync",
             crate::job::OpKind::Move => "move",
+            crate::job::OpKind::Bisync => "bisync",
         };
         let now = now();
         self.conn.execute(

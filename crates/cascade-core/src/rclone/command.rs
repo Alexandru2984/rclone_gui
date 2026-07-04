@@ -13,6 +13,7 @@ pub enum RcloneOp {
     Copy,
     Sync,
     Move,
+    Bisync,
     Check,
     Size,
     Ls,
@@ -25,6 +26,7 @@ impl RcloneOp {
             RcloneOp::Copy => "copy",
             RcloneOp::Sync => "sync",
             RcloneOp::Move => "move",
+            RcloneOp::Bisync => "bisync",
             RcloneOp::Check => "check",
             RcloneOp::Size => "size",
             RcloneOp::Ls => "ls",
@@ -36,7 +38,7 @@ impl RcloneOp {
     fn takes_dest(self) -> bool {
         matches!(
             self,
-            RcloneOp::Copy | RcloneOp::Sync | RcloneOp::Move | RcloneOp::Check
+            RcloneOp::Copy | RcloneOp::Sync | RcloneOp::Move | RcloneOp::Bisync | RcloneOp::Check
         )
     }
 
@@ -46,6 +48,7 @@ impl RcloneOp {
             RcloneOp::Copy => Operation::Copy,
             RcloneOp::Sync => Operation::Sync,
             RcloneOp::Move => Operation::Move,
+            RcloneOp::Bisync => Operation::Bisync,
             RcloneOp::Check => Operation::Check,
             RcloneOp::Size => Operation::Size,
             RcloneOp::Ls | RcloneOp::Lsd => Operation::Ls,
@@ -75,6 +78,9 @@ pub struct RcloneOptions {
     pub verbosity: u8,
     /// Emit periodic one-line transfer stats for progress parsing.
     pub stats: bool,
+    /// `bisync` only: establish the baseline listing on the first run
+    /// (`--resync`). Required once before normal two-way syncs.
+    pub resync: bool,
     /// Already-tokenized extra flags (each element is one argv item).
     pub extra_flags: Vec<String>,
 }
@@ -94,6 +100,7 @@ impl Default for RcloneOptions {
             includes: Vec::new(),
             verbosity: 0,
             stats: true,
+            resync: false,
             extra_flags: Vec::new(),
         }
     }
@@ -181,6 +188,10 @@ pub fn build_args(
         args.push("--stats".into());
         args.push("1s".into());
         args.push("--stats-one-line".into());
+    }
+    // bisync establishes its baseline with --resync on the first run.
+    if opts.resync && op == RcloneOp::Bisync {
+        args.push("--resync".into());
     }
     for flag in &opts.extra_flags {
         args.push(flag.clone());
@@ -274,6 +285,7 @@ mod tests {
             includes: vec!["*.jpg".into()],
             verbosity: 2,
             stats: false,
+            resync: false,
             dry_run: false,
             extra_flags: vec!["--fast-list".into()],
         };

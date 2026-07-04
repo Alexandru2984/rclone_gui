@@ -30,6 +30,8 @@ pub enum Operation {
     Copy,
     Sync,
     Move,
+    /// Two-way sync (rclone `bisync`) — can delete on either side.
+    Bisync,
     Check,
     Size,
     Ls,
@@ -51,7 +53,9 @@ pub fn classify(op: Operation, delete_enabled: bool) -> RiskLevel {
                 RiskLevel::Caution
             }
         }
-        Operation::Move | Operation::Delete | Operation::Purge => RiskLevel::Destructive,
+        Operation::Move | Operation::Delete | Operation::Purge | Operation::Bisync => {
+            RiskLevel::Destructive
+        }
     }
 }
 
