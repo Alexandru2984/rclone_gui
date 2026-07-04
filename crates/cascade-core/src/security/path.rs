@@ -290,7 +290,10 @@ mod tests {
     #[test]
     fn overlap_local_vs_remote_is_none() {
         assert_eq!(check_overlap("/home/u/data", "gdrive:data"), Overlap::None);
-        assert_eq!(check_overlap("gdrive:a", "gdrive:a/b"), Overlap::DestInsideSource);
+        assert_eq!(
+            check_overlap("gdrive:a", "gdrive:a/b"),
+            Overlap::DestInsideSource
+        );
         assert_eq!(check_overlap("gdrive:a", "dropbox:a"), Overlap::None);
     }
 

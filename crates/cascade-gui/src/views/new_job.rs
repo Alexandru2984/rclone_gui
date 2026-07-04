@@ -221,7 +221,9 @@ pub fn build(
         ))
         .build();
     let adv_resync = adw::SwitchRow::builder()
-        .title(crate::i18n::tr("First bisync run — establish baseline (--resync)"))
+        .title(crate::i18n::tr(
+            "First bisync run — establish baseline (--resync)",
+        ))
         .build();
     let adv_custom = adw::EntryRow::builder()
         .title(crate::i18n::tr("Custom flags (quoted, space-separated)"))
@@ -545,7 +547,8 @@ impl Inputs {
         self.adv_bwlimit
             .set_text(o.bwlimit.as_deref().unwrap_or(""));
         self.adv_retries.set_value(o.retries.unwrap_or(0) as f64);
-        self.adv_max_delete.set_value(o.max_delete.unwrap_or(0) as f64);
+        self.adv_max_delete
+            .set_value(o.max_delete.unwrap_or(0) as f64);
         self.adv_backup_dir
             .set_text(o.backup_dir.as_deref().unwrap_or(""));
         self.adv_checksum.set_active(o.checksum);

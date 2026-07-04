@@ -135,13 +135,22 @@ mod tests {
 
     #[test]
     fn rsync_changed_file_is_updated() {
-        assert_eq!(classify_rsync(">f.st...... report.pdf"), Some(Change::Updated));
+        assert_eq!(
+            classify_rsync(">f.st...... report.pdf"),
+            Some(Change::Updated)
+        );
     }
 
     #[test]
     fn rsync_deletion_is_deleted() {
-        assert_eq!(classify_rsync("*deleting old/stale.txt"), Some(Change::Deleted));
-        assert_eq!(classify_rsync("*deleting removed_dir/"), Some(Change::Deleted));
+        assert_eq!(
+            classify_rsync("*deleting old/stale.txt"),
+            Some(Change::Deleted)
+        );
+        assert_eq!(
+            classify_rsync("*deleting removed_dir/"),
+            Some(Change::Deleted)
+        );
     }
 
     #[test]

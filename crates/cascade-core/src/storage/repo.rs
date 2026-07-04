@@ -485,9 +485,18 @@ mod tests {
         };
         let options_json = serde_json::to_string(&spec).unwrap();
         let job = store
-            .insert_job("reload me", "rclone", "sync", "gdrive:a", "/local/b", &options_json)
+            .insert_job(
+                "reload me",
+                "rclone",
+                "sync",
+                "gdrive:a",
+                "/local/b",
+                &options_json,
+            )
             .unwrap();
-        let run = store.start_run(job, false, "rclone sync gdrive:a /local/b").unwrap();
+        let run = store
+            .start_run(job, false, "rclone sync gdrive:a /local/b")
+            .unwrap();
 
         let back = store.job_spec_for_run(run).unwrap().unwrap();
         assert_eq!(back.name, "reload me");

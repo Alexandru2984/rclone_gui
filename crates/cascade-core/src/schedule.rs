@@ -214,7 +214,13 @@ mod tests {
     fn on_failure_directive_is_added_when_requested() {
         let unit = notify_instance_for("Nightly Backup");
         assert_eq!(unit, "cascade-notify@nightly-backup.service");
-        let u = build_units("Nightly Backup", "/usr/bin/rsync", &[], "daily", Some(&unit));
+        let u = build_units(
+            "Nightly Backup",
+            "/usr/bin/rsync",
+            &[],
+            "daily",
+            Some(&unit),
+        );
         assert!(u
             .service
             .contains("OnFailure=cascade-notify@nightly-backup.service"));
@@ -234,7 +240,13 @@ mod tests {
 
     #[test]
     fn reads_on_calendar_back() {
-        let u = build_units("x", "/usr/bin/rsync", &["-a".into()], "Mon *-*-* 09:00", None);
+        let u = build_units(
+            "x",
+            "/usr/bin/rsync",
+            &["-a".into()],
+            "Mon *-*-* 09:00",
+            None,
+        );
         assert_eq!(
             parse_on_calendar(&u.timer).as_deref(),
             Some("Mon *-*-* 09:00")
