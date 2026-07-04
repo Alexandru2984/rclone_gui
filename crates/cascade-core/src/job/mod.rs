@@ -67,3 +67,56 @@ impl Job {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job() -> Job {
+        Job::new(
+            "nightly",
+            Tool::Rsync,
+            "/src/",
+            "/dst/",
+            false,
+            vec!["-a".into(), "/src/".into(), "/dst/".into()],
+        )
+    }
+
+    #[test]
+    fn new_job_starts_pending_with_default_progress() {
+        let j = job();
+        assert_eq!(j.status, JobStatus::Pending);
+        assert_eq!(j.id, None);
+        assert_eq!(j.name, "nightly");
+        assert_eq!(j.tool, Tool::Rsync);
+        assert_eq!(j.argv.len(), 3);
+        assert_eq!(j.progress.percent, None);
+        assert_eq!(j.progress.bytes_transferred, 0);
+    }
+
+    #[test]
+    fn set_status_applies_legal_transitions() {
+        let mut j = job();
+        j.set_status(JobStatus::Running).unwrap();
+        assert_eq!(j.status, JobStatus::Running);
+        j.set_status(JobStatus::Completed).unwrap();
+        assert_eq!(j.status, JobStatus::Completed);
+    }
+
+    #[test]
+    fn set_status_rejects_illegal_transitions_without_mutating() {
+        let mut j = job();
+        // Pending -> Completed is illegal; the error must leave status unchanged.
+        assert!(j.set_status(JobStatus::Completed).is_err());
+        assert_eq!(j.status, JobStatus::Pending);
+    }
+
+    #[test]
+    fn progress_default_is_empty() {
+        let p = Progress::default();
+        assert_eq!(p.percent, None);
+        assert_eq!(p.files_done, 0);
+        assert_eq!(p.eta_secs, None);
+    }
+}

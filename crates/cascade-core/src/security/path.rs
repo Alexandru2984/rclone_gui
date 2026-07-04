@@ -240,6 +240,20 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_system_dir_warns_via_canonicalization() {
+        // An innocent-looking link that resolves to a system directory must
+        // surface the system-dir warning (the canonicalized-verdict path).
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("etc_link");
+        std::os::unix::fs::symlink("/etc", &link).unwrap();
+        assert!(matches!(
+            validate(link.to_str().unwrap()),
+            Ok(PathVerdict::Warn(_))
+        ));
+    }
+
     #[test]
     fn overlap_identical_paths() {
         let dir = tempfile::tempdir().unwrap();

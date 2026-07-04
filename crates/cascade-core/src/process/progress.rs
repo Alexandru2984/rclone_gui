@@ -242,4 +242,20 @@ mod tests {
         let p = parse_rsync("4,096 100% 0.00kB/s 0:00:00").unwrap();
         assert_eq!(p.percent, Some(100.0));
     }
+
+    #[test]
+    fn rclone_compact_eta_components() {
+        // Seconds only.
+        let p = parse_rclone("Transferred: 1 B / 2 B, 50%, 1 B/s, ETA 30s").unwrap();
+        assert_eq!(p.eta_secs, Some(30));
+        // Minutes only.
+        let p = parse_rclone("Transferred: 1 B / 2 B, 50%, 1 B/s, ETA 45m").unwrap();
+        assert_eq!(p.eta_secs, Some(45 * 60));
+        // Hours only.
+        let p = parse_rclone("Transferred: 1 B / 2 B, 50%, 1 B/s, ETA 2h").unwrap();
+        assert_eq!(p.eta_secs, Some(2 * 3600));
+        // Fractional seconds truncate toward zero.
+        let p = parse_rclone("Transferred: 1 B / 2 B, 50%, 1 B/s, ETA 1.9s").unwrap();
+        assert_eq!(p.eta_secs, Some(1));
+    }
 }

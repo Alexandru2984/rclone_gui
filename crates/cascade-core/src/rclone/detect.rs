@@ -59,3 +59,39 @@ pub fn which(binary: &str) -> Option<std::path::PathBuf> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn which_finds_a_standard_tool_but_not_a_bogus_one() {
+        // `sh` exists on every Linux/CI box; a nonsense name does not.
+        assert!(which("sh").is_some());
+        assert!(which("definitely-not-a-real-binary-xyz").is_none());
+    }
+
+    #[test]
+    fn detect_named_returns_none_when_version_call_fails() {
+        // `false` exists but exits non-zero, so detection must report None
+        // rather than a bogus ToolInfo.
+        assert!(detect_named("false", &["--version"]).is_none());
+    }
+
+    #[test]
+    fn detect_named_returns_none_for_missing_binary() {
+        assert!(detect_named("definitely-not-a-real-binary-xyz", &["--version"]).is_none());
+    }
+
+    #[test]
+    fn detect_named_reads_a_version_line() {
+        // `env --version` prints a version banner and exits 0 on GNU coreutils.
+        if which("env").is_some() {
+            if let Some(info) = detect_named("env", &["--version"]) {
+                assert_eq!(info.binary, "env");
+                assert!(!info.version.is_empty());
+                assert!(info.path.ends_with("env"));
+            }
+        }
+    }
+}

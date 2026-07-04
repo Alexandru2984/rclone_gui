@@ -170,4 +170,39 @@ mod tests {
         let mode = std::fs::metadata(w.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
+
+    #[test]
+    fn counts_json_serializes_the_tally() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = LogWriter::create(dir.path(), 7).unwrap();
+        w.write_line("ERROR: boom").unwrap();
+        w.write_line("plain info").unwrap();
+        let json = w.counts_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["errors"], 1);
+        assert_eq!(parsed["info"], 1);
+        assert_eq!(parsed["warnings"], 0);
+    }
+
+    #[test]
+    fn prune_by_days_keeps_recent_and_tolerates_missing_dir() {
+        // A missing directory is not an error, just zero removed.
+        let missing = std::path::Path::new("/nonexistent/cascade/logs/xyz");
+        assert_eq!(prune_logs_older_than_days(missing, 30).unwrap(), 0);
+
+        // Freshly created logs are newer than the cutoff, so 30-day pruning
+        // keeps them.
+        let dir = tempfile::tempdir().unwrap();
+        LogWriter::create(dir.path(), 1).unwrap();
+        assert_eq!(prune_logs_older_than_days(dir.path(), 30).unwrap(), 0);
+        assert!(dir.path().join("run-1.log").exists());
+    }
+
+    #[test]
+    fn classify_recognizes_common_phrasings() {
+        assert_eq!(classify("some ERROR happened"), Level::Error);
+        assert_eq!(classify("operation failed"), Level::Error);
+        assert_eq!(classify("a warning: skipping"), Level::Warning);
+        assert_eq!(classify("just some info"), Level::Info);
+    }
 }

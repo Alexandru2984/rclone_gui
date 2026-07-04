@@ -48,3 +48,50 @@ impl Paths {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_has_sensible_layout() {
+        let p = Paths::resolve();
+        // The database lives under the data dir and is named cascade.db.
+        assert_eq!(p.db_path.file_name().unwrap(), "cascade.db");
+        assert!(p.db_path.starts_with(&p.data_dir));
+        // Logs live under the data dir.
+        assert!(p.log_dir.starts_with(&p.data_dir));
+        assert_eq!(p.log_dir.file_name().unwrap(), "logs");
+        // resolve() must not create anything on disk by itself.
+    }
+
+    #[test]
+    fn ensure_creates_private_directories() {
+        // Point Paths at a throwaway root so we never touch the real XDG dirs.
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        let paths = Paths {
+            config_dir: base.join("config"),
+            data_dir: base.join("data"),
+            log_dir: base.join("data/logs"),
+            db_path: base.join("data/cascade.db"),
+        };
+        paths.ensure().unwrap();
+
+        for d in [&paths.config_dir, &paths.data_dir, &paths.log_dir] {
+            assert!(d.is_dir(), "{d:?} was not created");
+        }
+        // ensure() is idempotent.
+        paths.ensure().unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&paths.data_dir)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o700, "data dir should be private (0700)");
+        }
+    }
+}

@@ -383,6 +383,44 @@ fn rclone_bisync_resync_merges_both_sides() {
 }
 
 #[test]
+fn rcd_daemon_starts_answers_and_stops() {
+    use cascade_core::process::capture_env;
+    use cascade_core::rclone::rcd::{parse_version, Rcd};
+    use std::time::Duration;
+
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+
+    let rcd = Rcd::start().expect("rcd should start");
+    assert!(
+        rcd.addr().starts_with("127.0.0.1:"),
+        "must bind loopback only"
+    );
+
+    // Give the daemon a moment to bind, then query it over the RC API. Retry a
+    // few times to avoid a race with process startup.
+    let mut version = None;
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(300));
+        let rx = capture_env("rclone", rcd.rc_args("core/version"), rcd.rc_env());
+        if let Ok(Ok(out)) = rx.recv_blocking() {
+            if let Some(v) = parse_version(&out) {
+                version = Some(v);
+                break;
+            }
+        }
+    }
+    rcd.stop();
+
+    assert!(
+        version.is_some(),
+        "the local RC daemon should answer core/version"
+    );
+}
+
+#[test]
 fn missing_binary_reports_failure_not_hang() {
     let handle = spawn_with_parser("definitely-not-a-tool-xyz", vec!["x".into()], None);
     let mut saw_error = false;
