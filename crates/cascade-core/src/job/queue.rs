@@ -183,4 +183,63 @@ mod tests {
         q.enqueue(7);
         assert_eq!(q.start_ready(), vec![7]);
     }
+
+    #[test]
+    fn lowering_max_below_running_starts_nothing_new() {
+        let mut q: Queue<i32> = Queue::new(3);
+        for i in 0..5 {
+            q.enqueue(i);
+        }
+        assert_eq!(q.start_ready().len(), 3); // 3 running
+        q.set_max(1); // below current running count
+        assert!(
+            q.start_ready().is_empty(),
+            "must not start more while over the new cap"
+        );
+        // Running jobs are not killed; only after enough complete does one start.
+        q.complete();
+        q.complete();
+        assert!(q.start_ready().is_empty()); // still 1 running == max 1
+        q.complete();
+        assert_eq!(q.start_ready(), vec![3]);
+    }
+
+    #[test]
+    fn removing_a_nonpending_item_returns_false() {
+        let mut q: Queue<i32> = Queue::new(1);
+        q.enqueue(1);
+        q.start_ready(); // 1 is now running, no longer pending
+        assert!(!q.remove(&1), "a running/unknown item cannot be removed");
+        assert!(!q.remove(&999));
+    }
+
+    #[test]
+    fn complete_does_not_underflow() {
+        let mut q: Queue<i32> = Queue::new(2);
+        // Completing with nothing running must saturate at zero, not panic.
+        q.complete();
+        q.complete();
+        assert_eq!(q.running(), 0);
+    }
+
+    #[test]
+    fn counts_track_pending_and_running() {
+        let mut q: Queue<i32> = Queue::new(2);
+        for i in 0..4 {
+            q.enqueue(i);
+        }
+        assert_eq!(q.pending(), 4);
+        assert_eq!(q.running(), 0);
+        q.start_ready();
+        assert_eq!(q.pending(), 2);
+        assert_eq!(q.running(), 2);
+    }
+
+    #[test]
+    fn move_on_absent_item_is_false() {
+        let mut q: Queue<i32> = Queue::new(1);
+        q.enqueue(1);
+        assert!(!q.move_up(&42));
+        assert!(!q.move_down(&42));
+    }
 }

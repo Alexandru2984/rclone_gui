@@ -80,8 +80,8 @@ pub fn providers() -> Vec<Provider> {
     ]
 }
 
-/// Validate an rclone remote name: non-empty, only letters/digits/_/-/space,
-/// and free of the `:` and `/` that have special meaning in rclone paths.
+/// Validate an rclone remote name: non-empty, only letters, digits, `_` and
+/// `-`, and free of the `:` and `/` that have special meaning in rclone paths.
 pub fn validate_remote_name(name: &str) -> Result<()> {
     let n = name.trim();
     if n.is_empty() {
@@ -215,5 +215,57 @@ mod tests {
         );
         assert!(parse_params("nokeyvalue").is_err());
         assert!(parse_params("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_name_rejects_spaces_and_symbols() {
+        // Matches the code (spaces are NOT allowed, despite older docs).
+        assert!(validate_remote_name("my remote").is_err());
+        assert!(validate_remote_name("weird!name").is_err());
+        assert!(validate_remote_name("   ").is_err());
+        // Surrounding whitespace is trimmed before validation.
+        assert!(validate_remote_name("  gdrive  ").is_ok());
+    }
+
+    #[test]
+    fn params_split_on_first_equals_only() {
+        // A value may itself contain '=' (e.g. a base64 token).
+        let pairs = parse_params("key=a=b=c").unwrap();
+        assert_eq!(pairs, vec![("key".into(), "a=b=c".into())]);
+    }
+
+    #[test]
+    fn params_allow_empty_value_but_not_empty_key() {
+        // "k=" is a valid (empty) value.
+        assert_eq!(parse_params("k=").unwrap(), vec![("k".into(), "".into())]);
+        // "=v" has no key and is refused.
+        assert!(parse_params("=v").is_err());
+    }
+
+    #[test]
+    fn params_honor_quoting() {
+        let pairs = parse_params(r#"pass="a b c" host=example.com"#).unwrap();
+        assert_eq!(pairs[0], ("pass".into(), "a b c".into()));
+        assert_eq!(pairs[1], ("host".into(), "example.com".into()));
+    }
+
+    #[test]
+    fn create_args_reject_empty_type() {
+        assert!(config_create_args("box", "  ", &[]).is_err());
+    }
+
+    #[test]
+    fn create_args_without_params_still_obscure() {
+        let args = config_create_args("box", "local", &[]).unwrap();
+        assert_eq!(args, vec!["config", "create", "box", "local", "--obscure"]);
+    }
+
+    #[test]
+    fn every_provider_has_nonempty_label_and_type() {
+        for p in providers() {
+            assert!(!p.label.is_empty());
+            assert!(!p.rtype.is_empty());
+            assert!(!p.hint.is_empty());
+        }
     }
 }

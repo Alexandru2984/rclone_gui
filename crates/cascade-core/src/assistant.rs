@@ -226,4 +226,46 @@ mod tests {
         assert_eq!(spec.destination, "gdrive:Backup");
         assert!(!spec.dry_run);
     }
+
+    #[test]
+    fn to_spec_carries_scenario_excludes() {
+        let projects = builtin_scenarios()
+            .into_iter()
+            .find(|s| s.id == "backup_projects")
+            .unwrap();
+        let spec = projects.to_spec("~/Projects", "/mnt/backup");
+        assert!(spec.options.excludes.contains(&"node_modules".to_string()));
+        assert!(spec.options.excludes.contains(&"target".to_string()));
+    }
+
+    #[test]
+    fn every_scenario_builds_a_valid_argv() {
+        // Each scenario, fed its own hint paths, must produce a runnable argv.
+        for sc in builtin_scenarios() {
+            let spec = sc.to_spec(sc.source_hint, sc.dest_hint);
+            assert!(
+                spec.build_argv().is_ok(),
+                "scenario {} produced an invalid argv",
+                sc.id
+            );
+            // Titles/descriptions are user-facing and must be non-empty.
+            assert!(!sc.title.is_empty(), "{} has an empty title", sc.id);
+            assert!(
+                !sc.description.is_empty(),
+                "{} has an empty description",
+                sc.id
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_scenarios_set_delete() {
+        for id in ["sync_two_local", "mirror_local_to_remote"] {
+            let sc = builtin_scenarios()
+                .into_iter()
+                .find(|s| s.id == id)
+                .unwrap();
+            assert!(sc.delete, "{id} should enable delete");
+        }
+    }
 }

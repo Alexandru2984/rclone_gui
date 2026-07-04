@@ -435,4 +435,62 @@ mod tests {
         assert_eq!(back.op, OpKind::Sync);
         assert_eq!(back.tool, Tool::Rclone);
     }
+
+    #[test]
+    fn old_profile_without_options_still_loads() {
+        // A spec serialized before AdvancedOptions existed (no `options` key).
+        let json = r#"{
+            "name":"legacy","tool":"rsync","op":"copy",
+            "source":"/a/","destination":"/b/","dry_run":false,"delete":false
+        }"#;
+        let back: JobSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(back.name, "legacy");
+        assert!(back.options.excludes.is_empty());
+        assert_eq!(back.options.max_delete, None);
+        assert!(!back.options.resync);
+    }
+
+    #[test]
+    fn old_options_without_new_fields_default_them() {
+        // An options blob predating max_delete/backup_dir/resync.
+        let json = r#"{
+            "name":"legacy","tool":"rclone","op":"sync",
+            "source":"/a/","destination":"gdrive:b","dry_run":false,"delete":false,
+            "options":{"excludes":["*.tmp"],"transfers":4}
+        }"#;
+        let back: JobSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(back.options.excludes, vec!["*.tmp".to_string()]);
+        assert_eq!(back.options.transfers, Some(4));
+        assert_eq!(back.options.max_delete, None);
+        assert_eq!(back.options.backup_dir, None);
+        assert!(!back.options.resync);
+    }
+
+    #[test]
+    fn delete_effective_matches_operation() {
+        assert!(!spec(Tool::Rsync, OpKind::Copy).delete_effective());
+        assert!(spec(Tool::Rsync, OpKind::Sync).delete_effective());
+        assert!(spec(Tool::Rsync, OpKind::Move).delete_effective());
+        assert!(spec(Tool::Rclone, OpKind::Bisync).delete_effective());
+        // Copy + explicit delete flag flips it on.
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        s.delete = true;
+        assert!(s.delete_effective());
+    }
+
+    #[test]
+    fn preview_is_shell_quoted_and_starts_with_binary() {
+        let mut s = spec(Tool::Rsync, OpKind::Copy);
+        s.source = "/path with space/".into();
+        let p = s.preview().unwrap();
+        assert!(p.starts_with("rsync "));
+        assert!(p.contains("'/path with space/'"));
+    }
+
+    #[test]
+    fn labels_cover_every_opkind() {
+        for op in [OpKind::Copy, OpKind::Sync, OpKind::Move, OpKind::Bisync] {
+            assert!(!op.label().is_empty());
+        }
+    }
 }

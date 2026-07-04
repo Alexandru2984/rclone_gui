@@ -210,4 +210,70 @@ mod tests {
         let n = args.len();
         assert_eq!(&args[n - 2..], &["/src/".to_string(), "/dst/".to_string()]);
     }
+
+    #[test]
+    fn dry_run_adds_itemize_changes() {
+        let opts = RsyncOptions {
+            dry_run: true,
+            ..Default::default()
+        };
+        let args = build_args("/a/", "/b/", &opts).unwrap();
+        assert!(args.contains(&"-n".to_string()));
+        assert!(args.contains(&"--itemize-changes".to_string()));
+    }
+
+    #[test]
+    fn no_itemize_when_not_dry_run() {
+        let args = build_args("/a/", "/b/", &RsyncOptions::default()).unwrap();
+        assert!(!args.contains(&"--itemize-changes".to_string()));
+    }
+
+    #[test]
+    fn progress_flags_present_by_default() {
+        let args = build_args("/a/", "/b/", &RsyncOptions::default()).unwrap();
+        assert!(args.contains(&"--info=progress2".to_string()));
+        assert!(args.contains(&"--outbuf=L".to_string()));
+    }
+
+    #[test]
+    fn verbosity_maps_to_flags() {
+        let mk = |v: u8| {
+            let opts = RsyncOptions {
+                verbosity: v,
+                progress: false,
+                archive: false,
+                ..Default::default()
+            };
+            build_args("/a/", "/b/", &opts).unwrap()
+        };
+        assert!(!mk(0).iter().any(|a| a == "-v" || a == "-vv"));
+        assert!(mk(1).contains(&"-v".to_string()));
+        assert!(mk(2).contains(&"-vv".to_string()));
+        assert!(mk(9).contains(&"-vv".to_string()));
+    }
+
+    #[test]
+    fn archive_flag_can_be_disabled() {
+        let opts = RsyncOptions {
+            archive: false,
+            progress: false,
+            verbosity: 0,
+            ..Default::default()
+        };
+        let args = build_args("/a/", "/b/", &opts).unwrap();
+        assert!(!args.contains(&"-a".to_string()));
+    }
+
+    #[test]
+    fn extra_flags_precede_the_two_endpoints() {
+        let opts = RsyncOptions {
+            extra_flags: vec!["--partial".into()],
+            ..Default::default()
+        };
+        let args = build_args("/src/", "/dst/", &opts).unwrap();
+        let n = args.len();
+        // Endpoints stay last; the custom flag is somewhere before them.
+        assert_eq!(&args[n - 2..], &["/src/".to_string(), "/dst/".to_string()]);
+        assert!(args[..n - 2].contains(&"--partial".to_string()));
+    }
 }

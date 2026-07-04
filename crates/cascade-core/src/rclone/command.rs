@@ -322,4 +322,99 @@ mod tests {
         let p = preview("rclone", &args);
         assert_eq!(p, "rclone sync '/path with space' /dst");
     }
+
+    #[test]
+    fn stats_flags_present_by_default() {
+        let args = build_args(RcloneOp::Copy, "/a", Some("/b"), &RcloneOptions::default()).unwrap();
+        assert!(args.contains(&"--stats".to_string()));
+        assert!(args.contains(&"--stats-one-line".to_string()));
+    }
+
+    #[test]
+    fn verbosity_maps_to_flags() {
+        let mk = |v: u8| {
+            let opts = RcloneOptions {
+                verbosity: v,
+                stats: false,
+                ..Default::default()
+            };
+            build_args(RcloneOp::Copy, "/a", Some("/b"), &opts).unwrap()
+        };
+        assert!(!mk(0).iter().any(|a| a == "-v" || a == "-vv"));
+        assert!(mk(1).contains(&"-v".to_string()));
+        assert!(mk(2).contains(&"-vv".to_string()));
+        // 3+ saturates at -vv.
+        assert!(mk(5).contains(&"-vv".to_string()));
+    }
+
+    #[test]
+    fn read_only_op_ignores_a_supplied_destination() {
+        let opts = RcloneOptions {
+            stats: false,
+            ..Default::default()
+        };
+        // Size takes no dest; passing one must not add it to the argv.
+        let args = build_args(RcloneOp::Size, "gdrive:", Some("/ignored"), &opts).unwrap();
+        assert_eq!(args, vec!["size", "gdrive:"]);
+        assert!(!args.iter().any(|a| a == "/ignored"));
+    }
+
+    #[test]
+    fn lsd_subcommand_and_no_dest() {
+        let opts = RcloneOptions {
+            stats: false,
+            ..Default::default()
+        };
+        let args = build_args(RcloneOp::Lsd, "gdrive:", None, &opts).unwrap();
+        assert_eq!(args, vec!["lsd", "gdrive:"]);
+    }
+
+    #[test]
+    fn extra_flags_come_last_and_preserve_order() {
+        let opts = RcloneOptions {
+            stats: false,
+            extra_flags: vec![
+                "--fast-list".into(),
+                "--drive-chunk-size".into(),
+                "64M".into(),
+            ],
+            ..Default::default()
+        };
+        let args = build_args(RcloneOp::Copy, "/a", Some("/b"), &opts).unwrap();
+        let n = args.len();
+        assert_eq!(
+            &args[n - 3..],
+            &["--fast-list", "--drive-chunk-size", "64M"]
+        );
+    }
+
+    #[test]
+    fn multiple_includes_and_excludes_each_get_a_flag() {
+        let opts = RcloneOptions {
+            stats: false,
+            excludes: vec!["*.tmp".into(), "*.log".into()],
+            includes: vec!["*.jpg".into()],
+            ..Default::default()
+        };
+        let args = build_args(RcloneOp::Copy, "/a", Some("/b"), &opts).unwrap();
+        assert_eq!(args.iter().filter(|a| *a == "--exclude").count(), 2);
+        assert_eq!(args.iter().filter(|a| *a == "--include").count(), 1);
+    }
+
+    #[test]
+    fn preview_quotes_empty_and_quote_containing_args() {
+        // An empty argument must render as '' so it isn't lost.
+        assert_eq!(preview("rclone", &["".into()]), "rclone ''");
+        // A single quote is escaped with the '\'' idiom.
+        let p = preview("rclone", &["a'b".into()]);
+        assert_eq!(p, r"rclone 'a'\''b'");
+        // A plain safe token is left bare.
+        assert_eq!(preview("rclone", &["copy".into()]), "rclone copy");
+    }
+
+    #[test]
+    fn whitespace_only_source_rejected_for_dest_op() {
+        let opts = RcloneOptions::default();
+        assert!(build_args(RcloneOp::Copy, "\t ", Some("/b"), &opts).is_err());
+    }
 }

@@ -113,4 +113,59 @@ mod tests {
             vec!["lsjson", "gdrive:Photos"]
         );
     }
+
+    #[test]
+    fn empty_lsjson_array_is_empty_vec() {
+        assert!(parse_lsjson("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_lsjson_is_error() {
+        assert!(parse_lsjson("not json").is_err());
+        assert!(parse_lsjson("{\"not\":\"an array\"}").is_err());
+    }
+
+    #[test]
+    fn lsjson_tolerates_missing_optional_fields() {
+        // Size/IsDir default; only Name/Path are required.
+        let json = r#"[{"Name":"a.txt","Path":"a.txt"}]"#;
+        let entries = parse_lsjson(json).unwrap();
+        assert_eq!(entries[0].size, 0);
+        assert!(!entries[0].is_dir);
+    }
+
+    #[test]
+    fn parse_remotes_handles_crlf_and_blanks() {
+        let out = "gdrive:\r\n\r\n  onedrive:  \r\n";
+        assert_eq!(parse_remotes(out), vec!["gdrive:", "onedrive:"]);
+        assert!(parse_remotes("").is_empty());
+    }
+
+    #[test]
+    fn join_trims_and_handles_root() {
+        assert_eq!(join("gdrive:", "///"), "gdrive:");
+        assert_eq!(join("gdrive:", "a/b/"), "gdrive:a/b");
+        assert_eq!(join("s3:bucket/", "sub"), "s3:bucket/sub");
+    }
+
+    #[test]
+    fn parent_sub_walks_up_levels() {
+        assert_eq!(parent_sub("a/b/c"), "a/b");
+        assert_eq!(parent_sub("a/b"), "a");
+        assert_eq!(parent_sub("a"), "");
+        assert_eq!(parent_sub("/a/b/"), "a");
+    }
+
+    #[test]
+    fn directories_sort_before_files_case_insensitively() {
+        let json = r#"[
+            {"Name":"BBB.txt","Path":"BBB.txt","IsDir":false},
+            {"Name":"aaa.txt","Path":"aaa.txt","IsDir":false},
+            {"Name":"Zdir","Path":"Zdir","IsDir":true},
+            {"Name":"adir","Path":"adir","IsDir":true}
+        ]"#;
+        let e = parse_lsjson(json).unwrap();
+        let names: Vec<&str> = e.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["adir", "Zdir", "aaa.txt", "BBB.txt"]);
+    }
 }

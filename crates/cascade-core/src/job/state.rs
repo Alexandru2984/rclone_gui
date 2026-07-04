@@ -92,4 +92,55 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn pending_can_only_run_or_cancel() {
+        assert!(Pending.transition(Running).is_ok());
+        assert!(Pending.transition(Cancelled).is_ok());
+        // Not straight to Paused / Completed / Failed.
+        assert!(Pending.transition(Paused).is_err());
+        assert!(Pending.transition(Completed).is_err());
+        assert!(Pending.transition(Failed).is_err());
+    }
+
+    #[test]
+    fn paused_cannot_go_directly_to_a_finished_state() {
+        assert!(Paused.transition(Running).is_ok());
+        assert!(Paused.transition(Cancelled).is_ok());
+        assert!(Paused.transition(Completed).is_err());
+        assert!(Paused.transition(Failed).is_err());
+    }
+
+    #[test]
+    fn self_transitions_are_rejected() {
+        for s in [Pending, Running, Paused, Completed, Failed, Cancelled] {
+            assert!(s.transition(s).is_err(), "{s:?} -> {s:?} should be illegal");
+        }
+    }
+
+    #[test]
+    fn non_terminal_states_report_as_such() {
+        for s in [Pending, Running, Paused] {
+            assert!(!s.is_terminal());
+        }
+    }
+
+    #[test]
+    fn transition_error_carries_endpoints() {
+        match Completed.transition(Running) {
+            Err(crate::error::CoreError::IllegalTransition { from, to }) => {
+                assert_eq!(from, Completed);
+                assert_eq!(to, Running);
+            }
+            other => panic!("expected IllegalTransition, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_serde_is_lowercase() {
+        let json = serde_json::to_string(&Running).unwrap();
+        assert_eq!(json, "\"running\"");
+        let back: super::JobStatus = serde_json::from_str("\"paused\"").unwrap();
+        assert_eq!(back, Paused);
+    }
 }
