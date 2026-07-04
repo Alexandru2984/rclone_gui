@@ -259,3 +259,9 @@ msgstr "Destinația se află în interiorul sursei — se poate copia un folder 
 
 msgid "The source is inside the destination — a mirror/delete could remove other files there."
 msgstr "Sursa se află în interiorul destinației — o oglindire/ștergere ar putea elimina alte fișiere de acolo."
+
+msgid "Abort if more than N files would be deleted (0 = no limit)"
+msgstr "Anulează dacă s-ar șterge mai mult de N fișiere (0 = fără limită)"
+
+msgid "Backup directory for replaced/deleted files (reversible sync)"
+msgstr "Director de backup pentru fișierele înlocuite/șterse (sincronizare reversibilă)"

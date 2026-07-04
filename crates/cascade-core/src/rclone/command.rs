@@ -63,6 +63,12 @@ pub struct RcloneOptions {
     /// e.g. "10M" — passed verbatim as a single argv item, never shell-expanded.
     pub bwlimit: Option<String>,
     pub retries: Option<u32>,
+    /// Abort the transfer if it would delete more than this many files
+    /// (rclone `--max-delete`). A safety net against a runaway mirror.
+    pub max_delete: Option<u64>,
+    /// Move deleted/replaced files into this directory instead of removing them
+    /// (rclone `--backup-dir`). Makes a destructive sync reversible.
+    pub backup_dir: Option<String>,
     pub excludes: Vec<String>,
     pub includes: Vec<String>,
     /// 0 = quiet, 1 = -v, 2 = -vv.
@@ -82,6 +88,8 @@ impl Default for RcloneOptions {
             checksum: false,
             bwlimit: None,
             retries: None,
+            max_delete: None,
+            backup_dir: None,
             excludes: Vec::new(),
             includes: Vec::new(),
             verbosity: 0,
@@ -146,6 +154,14 @@ pub fn build_args(
     if let Some(r) = opts.retries {
         args.push("--retries".into());
         args.push(r.to_string());
+    }
+    if let Some(m) = opts.max_delete {
+        args.push("--max-delete".into());
+        args.push(m.to_string());
+    }
+    if let Some(dir) = &opts.backup_dir {
+        args.push("--backup-dir".into());
+        args.push(dir.clone());
     }
     for ex in &opts.excludes {
         args.push("--exclude".into());
@@ -252,6 +268,8 @@ mod tests {
             checksum: true,
             bwlimit: Some("10M".into()),
             retries: Some(5),
+            max_delete: None,
+            backup_dir: None,
             excludes: vec!["*.tmp".into()],
             includes: vec!["*.jpg".into()],
             verbosity: 2,
@@ -270,6 +288,20 @@ mod tests {
         assert!(joined.contains("--include *.jpg"));
         assert!(joined.contains("-vv"));
         assert!(joined.contains("--fast-list"));
+    }
+
+    #[test]
+    fn max_delete_and_backup_dir_map_to_flags() {
+        let opts = RcloneOptions {
+            max_delete: Some(50),
+            backup_dir: Some("/mnt/trash".into()),
+            stats: false,
+            ..Default::default()
+        };
+        let args = build_args(RcloneOp::Sync, "/a", Some("/b"), &opts).unwrap();
+        let joined = args.join(" ");
+        assert!(joined.contains("--max-delete 50"));
+        assert!(joined.contains("--backup-dir /mnt/trash"));
     }
 
     #[test]

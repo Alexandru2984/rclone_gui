@@ -45,6 +45,8 @@ struct Inputs {
     adv_checksum: adw::SwitchRow,
     adv_compress: adw::SwitchRow,
     adv_ssh_port: adw::SpinRow,
+    adv_max_delete: adw::SpinRow,
+    adv_backup_dir: adw::EntryRow,
     adv_custom: adw::EntryRow,
 
     preview: gtk::Label,
@@ -205,6 +207,16 @@ pub fn build(
         0.0,
         65535.0,
     );
+    let adv_max_delete = spin_row(
+        &crate::i18n::tr("Abort if more than N files would be deleted (0 = no limit)"),
+        0.0,
+        1_000_000.0,
+    );
+    let adv_backup_dir = adw::EntryRow::builder()
+        .title(crate::i18n::tr(
+            "Backup directory for replaced/deleted files (reversible sync)",
+        ))
+        .build();
     let adv_custom = adw::EntryRow::builder()
         .title(crate::i18n::tr("Custom flags (quoted, space-separated)"))
         .build();
@@ -213,13 +225,20 @@ pub fn build(
         .title(crate::i18n::tr("Advanced options"))
         .subtitle(crate::i18n::tr("Patterns, performance, and custom flags"))
         .build();
-    for row in [&adv_excludes, &adv_includes, &adv_bwlimit, &adv_custom] {
+    for row in [
+        &adv_excludes,
+        &adv_includes,
+        &adv_bwlimit,
+        &adv_backup_dir,
+        &adv_custom,
+    ] {
         advanced.add_row(row);
     }
     advanced.add_row(&adv_transfers);
     advanced.add_row(&adv_checkers);
     advanced.add_row(&adv_retries);
     advanced.add_row(&adv_ssh_port);
+    advanced.add_row(&adv_max_delete);
     advanced.add_row(&adv_checksum);
     advanced.add_row(&adv_compress);
     let adv_group = adw::PreferencesGroup::new();
@@ -343,6 +362,8 @@ pub fn build(
         adv_checksum,
         adv_compress,
         adv_ssh_port,
+        adv_max_delete,
+        adv_backup_dir,
         adv_custom,
         preview,
         risk,
@@ -443,11 +464,13 @@ impl Inputs {
         on!(self.adv_excludes, connect_changed);
         on!(self.adv_includes, connect_changed);
         on!(self.adv_bwlimit, connect_changed);
+        on!(self.adv_backup_dir, connect_changed);
         on!(self.adv_custom, connect_changed);
         on!(self.adv_transfers, connect_value_notify);
         on!(self.adv_checkers, connect_value_notify);
         on!(self.adv_retries, connect_value_notify);
         on!(self.adv_ssh_port, connect_value_notify);
+        on!(self.adv_max_delete, connect_value_notify);
         on!(self.adv_checksum, connect_active_notify);
         on!(self.adv_compress, connect_active_notify);
 
@@ -512,6 +535,9 @@ impl Inputs {
         self.adv_bwlimit
             .set_text(o.bwlimit.as_deref().unwrap_or(""));
         self.adv_retries.set_value(o.retries.unwrap_or(0) as f64);
+        self.adv_max_delete.set_value(o.max_delete.unwrap_or(0) as f64);
+        self.adv_backup_dir
+            .set_text(o.backup_dir.as_deref().unwrap_or(""));
         self.adv_checksum.set_active(o.checksum);
         self.adv_compress.set_active(o.compress);
         self.adv_ssh_port.set_value(o.ssh_port.unwrap_or(0) as f64);
@@ -586,6 +612,15 @@ impl Inputs {
                 }
             },
             retries: spin_opt(&self.adv_retries),
+            max_delete: spin_opt(&self.adv_max_delete).map(|v| v as u64),
+            backup_dir: {
+                let d = self.adv_backup_dir.text().trim().to_string();
+                if d.is_empty() {
+                    None
+                } else {
+                    Some(d)
+                }
+            },
             checksum: self.adv_checksum.is_active(),
             compress: self.adv_compress.is_active(),
             ssh_port: spin_opt(&self.adv_ssh_port).map(|v| v as u16),

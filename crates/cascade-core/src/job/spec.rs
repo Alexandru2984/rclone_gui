@@ -58,6 +58,12 @@ pub struct AdvancedOptions {
     pub bwlimit: Option<String>,
     /// rclone `--retries`.
     pub retries: Option<u32>,
+    /// Abort if the run would delete more than this many files (rclone
+    /// `--max-delete`, rsync `--max-delete=N`). A runaway-mirror safety net.
+    pub max_delete: Option<u64>,
+    /// Move replaced/deleted files here instead of removing them (rclone
+    /// `--backup-dir`, rsync `--backup --backup-dir=`). Reversible sync.
+    pub backup_dir: Option<String>,
     /// Verify by checksum (rclone `--checksum`, rsync `--checksum`).
     pub checksum: bool,
     /// rsync `-z` compression.
@@ -149,6 +155,8 @@ impl JobSpec {
                     checksum: o.checksum,
                     bwlimit: o.bwlimit.clone(),
                     retries: o.retries,
+                    max_delete: o.max_delete,
+                    backup_dir: o.backup_dir.clone(),
                     excludes: o.excludes.clone(),
                     includes: o.includes.clone(),
                     extra_flags: o.extra_flags.clone(),
@@ -165,6 +173,8 @@ impl JobSpec {
                     dry_run: self.dry_run,
                     delete: self.delete_effective(),
                     compress: o.compress,
+                    max_delete: o.max_delete,
+                    backup_dir: o.backup_dir.clone(),
                     excludes: o.excludes.clone(),
                     includes: o.includes.clone(),
                     ssh_port: o.ssh_port,

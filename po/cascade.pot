@@ -88,3 +88,9 @@ msgstr ""
 
 msgid "The source is inside the destination — a mirror/delete could remove other files there."
 msgstr ""
+
+msgid "Abort if more than N files would be deleted (0 = no limit)"
+msgstr ""
+
+msgid "Backup directory for replaced/deleted files (reversible sync)"
+msgstr ""

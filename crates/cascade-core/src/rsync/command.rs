@@ -18,6 +18,12 @@ pub struct RsyncOptions {
     pub delete: bool,
     /// `-z`: compress during transfer.
     pub compress: bool,
+    /// Abort if the transfer would delete more than this many files
+    /// (`--max-delete=N`). A safety net against a runaway mirror.
+    pub max_delete: Option<u64>,
+    /// Move replaced/deleted files into this directory instead of removing them
+    /// (`--backup --backup-dir=DIR`). Makes a destructive sync reversible.
+    pub backup_dir: Option<String>,
     /// `--exclude PATTERN` (repeated).
     pub excludes: Vec<String>,
     /// `--include PATTERN` (repeated).
@@ -40,6 +46,8 @@ impl Default for RsyncOptions {
             dry_run: false,
             delete: false,
             compress: false,
+            max_delete: None,
+            backup_dir: None,
             excludes: Vec::new(),
             includes: Vec::new(),
             progress: true,
@@ -77,6 +85,17 @@ pub fn build_args(source: &str, dest: &str, opts: &RsyncOptions) -> Result<Vec<S
     }
     if opts.delete {
         args.push("--delete".into());
+    }
+    if let Some(m) = opts.max_delete {
+        // rsync long options need the `=NUM` form; `--max-delete 5` would treat
+        // `5` as a path.
+        args.push(format!("--max-delete={m}"));
+    }
+    if let Some(dir) = &opts.backup_dir {
+        // --backup-dir implies -b on modern rsync, but pass -b explicitly so the
+        // behavior is version-independent.
+        args.push("-b".into());
+        args.push(format!("--backup-dir={dir}"));
     }
     if opts.progress {
         // progress2 = overall transfer stats; outbuf=L = line-buffered, parseable
@@ -147,6 +166,29 @@ mod tests {
         let args = build_args("/local/", "user@host:/remote/", &opts).unwrap();
         let e_idx = args.iter().position(|a| a == "-e").unwrap();
         assert_eq!(args[e_idx + 1], "ssh -p 2222");
+    }
+
+    #[test]
+    fn max_delete_uses_equals_form() {
+        let opts = RsyncOptions {
+            max_delete: Some(20),
+            ..Default::default()
+        };
+        let args = build_args("/a/", "/b/", &opts).unwrap();
+        // Must be a single `--max-delete=20` token, never two args.
+        assert!(args.contains(&"--max-delete=20".to_string()));
+        assert!(!args.iter().any(|a| a == "--max-delete"));
+    }
+
+    #[test]
+    fn backup_dir_implies_backup_flag() {
+        let opts = RsyncOptions {
+            backup_dir: Some("/mnt/trash".into()),
+            ..Default::default()
+        };
+        let args = build_args("/a/", "/b/", &opts).unwrap();
+        assert!(args.contains(&"-b".to_string()));
+        assert!(args.contains(&"--backup-dir=/mnt/trash".to_string()));
     }
 
     #[test]
