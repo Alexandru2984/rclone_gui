@@ -61,6 +61,7 @@
 
 ### Mandatory validations checklist (enforced in `cascade-core`, covered by tests)
 - [x] `security::path::validate` — empty/root/home guards
+- [x] `security::path::check_overlap` — identical / parent-child src↔dst detection
 - [x] `security::destructive::classify` — op risk level
 - [x] `security::sanitize::redact` — secret redaction
 - [x] `job::state::transition` — legal state machine only

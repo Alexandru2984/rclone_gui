@@ -382,6 +382,13 @@ pub fn build(
     }
 }
 
+/// The translated source/destination overlap warning for a spec, or `None`.
+fn overlap_warning(spec: &JobSpec) -> Option<String> {
+    path::check_overlap(&spec.source, &spec.destination)
+        .warning()
+        .map(crate::i18n::tr)
+}
+
 fn spin_row(title: &str, lower: f64, upper: f64) -> adw::SpinRow {
     adw::SpinRow::builder()
         .title(title)
@@ -602,7 +609,7 @@ impl Inputs {
                     Ok(p) => self.preview.set_label(&p),
                     Err(e) => self.preview.set_label(&format!("error: {e}")),
                 }
-                self.set_risk(spec.risk());
+                self.set_risk(spec.risk(), overlap_warning(&spec));
             }
             Err(msg) => {
                 self.preview.set_label(&format!("⚠ {msg}"));
@@ -615,8 +622,8 @@ impl Inputs {
         }
     }
 
-    fn set_risk(&self, risk: RiskLevel) {
-        let (text, css) = match risk {
+    fn set_risk(&self, risk: RiskLevel, overlap: Option<String>) {
+        let (mut text, mut css) = match risk {
             RiskLevel::Safe => (crate::i18n::tr("✓ Safe — nothing is deleted"), "success"),
             RiskLevel::Caution => (
                 crate::i18n::tr("• Files may be overwritten at the destination"),
@@ -627,6 +634,12 @@ impl Inputs {
                 "error",
             ),
         };
+        // A source/destination overlap is a likely mistake regardless of the
+        // base risk, so surface it and raise the badge to the error style.
+        if let Some(w) = &overlap {
+            text = format!("{text}\n⚠ {w}");
+            css = "error";
+        }
         self.risk.set_label(&text);
         for c in ["success", "warning", "error"] {
             self.risk.remove_css_class(c);
@@ -635,7 +648,7 @@ impl Inputs {
 
         self.run_btn.remove_css_class("destructive-action");
         self.run_btn.remove_css_class("suggested-action");
-        if risk == RiskLevel::Destructive {
+        if risk == RiskLevel::Destructive || overlap.is_some() {
             self.run_btn.add_css_class("destructive-action");
         } else {
             self.run_btn.add_css_class("suggested-action");
@@ -653,7 +666,7 @@ impl Inputs {
             }
         };
         let confirm = self.ctx.settings.borrow().confirm_destructive;
-        if spec.risk().requires_confirmation() && confirm {
+        if (spec.risk().requires_confirmation() || overlap_warning(&spec).is_some()) && confirm {
             self.confirm_enqueue(spec);
         } else {
             (self.enqueue)(spec);
@@ -664,10 +677,13 @@ impl Inputs {
     /// Confirm before queuing a destructive job. Unlike the Start dialog there
     /// is no "dry-run first" option — the safe default is simply to not queue.
     fn confirm_enqueue(self: &Rc<Self>, spec: JobSpec) {
-        let body = crate::i18n::tr(
+        let mut body = crate::i18n::tr(
             "This operation can delete files at the destination. Queued jobs run without a further prompt.\n\n%s",
         )
         .replace("%s", &spec.preview().unwrap_or_default());
+        if let Some(w) = overlap_warning(&spec) {
+            body = format!("⚠ {w}\n\n{body}");
+        }
         let cancel_l = crate::i18n::tr("Cancel");
         let add_l = crate::i18n::tr("Add to queue");
         let dialog =
@@ -696,18 +712,24 @@ impl Inputs {
             }
         };
         let confirm = self.ctx.settings.borrow().confirm_destructive;
-        if spec.risk().requires_confirmation() && confirm {
-            self.confirm_destructive(&spec.preview().unwrap_or_default());
+        let overlap = overlap_warning(&spec);
+        // Confirm on a destructive op OR on a source/destination overlap, since
+        // an overlap is a likely mistake even for an otherwise "safe" copy.
+        if (spec.risk().requires_confirmation() || overlap.is_some()) && confirm {
+            self.confirm_destructive(&spec.preview().unwrap_or_default(), overlap);
         } else {
             self.run(false);
         }
     }
 
-    fn confirm_destructive(self: &Rc<Self>, command_desc: &str) {
-        let body = crate::i18n::tr(
+    fn confirm_destructive(self: &Rc<Self>, command_desc: &str, overlap: Option<String>) {
+        let mut body = crate::i18n::tr(
             "This operation can delete files at the destination.\n\n%s\n\nRunning a dry-run first lets you preview exactly what would change.",
         )
         .replace("%s", command_desc);
+        if let Some(w) = overlap {
+            body = format!("⚠ {w}\n\n{body}");
+        }
         let cancel_l = crate::i18n::tr("Cancel");
         let dry_l = crate::i18n::tr("Dry-run first");
         let run_l = crate::i18n::tr("Run anyway");

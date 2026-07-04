@@ -14,6 +14,87 @@ pub enum PathVerdict {
     Warn(String),
 }
 
+/// The spatial relationship between a source and a destination, used to warn
+/// about transfers that loop, duplicate, or could delete their own source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlap {
+    /// No problematic relationship — safe to proceed.
+    None,
+    /// Source and destination are the same location.
+    Identical,
+    /// The destination lives inside the source tree (copying a tree into itself).
+    DestInsideSource,
+    /// The source lives inside the destination tree; a mirror (`--delete`) here
+    /// could remove the destination's other contents.
+    SourceInsideDest,
+}
+
+impl Overlap {
+    /// A human-readable warning, or `None` when there is no overlap.
+    pub fn warning(self) -> Option<&'static str> {
+        match self {
+            Overlap::None => None,
+            Overlap::Identical => {
+                Some(crate::n("Source and destination are the same location."))
+            }
+            Overlap::DestInsideSource => Some(crate::n(
+                "The destination is inside the source — this can copy a folder into itself.",
+            )),
+            Overlap::SourceInsideDest => Some(crate::n(
+                "The source is inside the destination — a mirror/delete could remove other files there.",
+            )),
+        }
+    }
+}
+
+/// Normalize a path for overlap comparison: resolve symlinks/`.`/relative parts
+/// via canonicalization where possible (falling back to the parent for a
+/// not-yet-existing destination), and strip a trailing slash.
+fn normalize_for_overlap(p: &str) -> Option<String> {
+    if is_remote_endpoint(p) {
+        return Some(p.trim().trim_end_matches('/').to_string());
+    }
+    let trimmed = p.trim().trim_end_matches('/');
+    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
+    let path = std::path::Path::new(trimmed);
+    if let Ok(c) = std::fs::canonicalize(path) {
+        return Some(c.to_string_lossy().into_owned());
+    }
+    // The path itself may not exist yet (a fresh destination); resolve its
+    // parent so a relative or symlinked destination still compares correctly.
+    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+        if let Ok(c) = std::fs::canonicalize(parent) {
+            return Some(c.join(name).to_string_lossy().into_owned());
+        }
+    }
+    Some(trimmed.to_string())
+}
+
+/// Classify how `source` and `dest` overlap. A local path and a remote endpoint
+/// (or two paths on different remotes) can never overlap, so they return
+/// [`Overlap::None`]. Comparison is component-aware: `/a/b` is not "inside"
+/// `/a/bc`.
+pub fn check_overlap(source: &str, dest: &str) -> Overlap {
+    // A local path and a remote endpoint cannot share a filesystem location.
+    if is_remote_endpoint(source) != is_remote_endpoint(dest) {
+        return Overlap::None;
+    }
+    let (s, d) = match (normalize_for_overlap(source), normalize_for_overlap(dest)) {
+        (Some(s), Some(d)) => (s, d),
+        _ => return Overlap::None,
+    };
+    if s == d {
+        return Overlap::Identical;
+    }
+    if d.starts_with(&format!("{s}/")) {
+        return Overlap::DestInsideSource;
+    }
+    if s.starts_with(&format!("{d}/")) {
+        return Overlap::SourceInsideDest;
+    }
+    Overlap::None
+}
+
 /// Returns `true` if `s` looks like an rclone remote endpoint (`remote:path`)
 /// rather than a local filesystem path. We do not apply local-path rules to it.
 pub fn is_remote_endpoint(s: &str) -> bool {
@@ -157,6 +238,60 @@ mod tests {
             validate(link.to_str().unwrap()),
             Err(CoreError::DangerousPath(_))
         ));
+    }
+
+    #[test]
+    fn overlap_identical_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().to_str().unwrap();
+        assert_eq!(check_overlap(p, p), Overlap::Identical);
+        // A trailing slash must not change the verdict.
+        assert_eq!(check_overlap(p, &format!("{p}/")), Overlap::Identical);
+    }
+
+    #[test]
+    fn overlap_dest_inside_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().to_str().unwrap().to_string();
+        let dst = dir.path().join("backup");
+        std::fs::create_dir_all(&dst).unwrap();
+        assert_eq!(
+            check_overlap(&src, dst.to_str().unwrap()),
+            Overlap::DestInsideSource
+        );
+    }
+
+    #[test]
+    fn overlap_source_inside_dest() {
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().to_str().unwrap().to_string();
+        let src = dir.path().join("data");
+        std::fs::create_dir_all(&src).unwrap();
+        assert_eq!(
+            check_overlap(src.to_str().unwrap(), &dst),
+            Overlap::SourceInsideDest
+        );
+    }
+
+    #[test]
+    fn overlap_sibling_prefix_is_not_overlap() {
+        // "/x/b" must not count as inside "/x/bc" — comparison is component-wise.
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("b");
+        let b = dir.path().join("bc");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert_eq!(
+            check_overlap(a.to_str().unwrap(), b.to_str().unwrap()),
+            Overlap::None
+        );
+    }
+
+    #[test]
+    fn overlap_local_vs_remote_is_none() {
+        assert_eq!(check_overlap("/home/u/data", "gdrive:data"), Overlap::None);
+        assert_eq!(check_overlap("gdrive:a", "gdrive:a/b"), Overlap::DestInsideSource);
+        assert_eq!(check_overlap("gdrive:a", "dropbox:a"), Overlap::None);
     }
 
     #[test]

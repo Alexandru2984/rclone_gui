@@ -79,3 +79,12 @@ msgstr ""
 
 msgid "✗ This job embeds a credential. Configure an rclone remote and reference it instead."
 msgstr ""
+
+msgid "Source and destination are the same location."
+msgstr ""
+
+msgid "The destination is inside the source — this can copy a folder into itself."
+msgstr ""
+
+msgid "The source is inside the destination — a mirror/delete could remove other files there."
+msgstr ""

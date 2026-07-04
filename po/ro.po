@@ -250,3 +250,12 @@ msgstr "Sarcină eșuată"
 
 msgid "✗ This job embeds a credential. Configure an rclone remote and reference it instead."
 msgstr "✗ Această sarcină conține o parolă. Configurează un remote rclone și folosește-l în schimb."
+
+msgid "Source and destination are the same location."
+msgstr "Sursa și destinația sunt aceeași locație."
+
+msgid "The destination is inside the source — this can copy a folder into itself."
+msgstr "Destinația se află în interiorul sursei — se poate copia un folder în el însuși."
+
+msgid "The source is inside the destination — a mirror/delete could remove other files there."
+msgstr "Sursa se află în interiorul destinației — o oglindire/ștergere ar putea elimina alte fișiere de acolo."
