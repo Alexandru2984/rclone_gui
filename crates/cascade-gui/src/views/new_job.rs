@@ -1125,3 +1125,62 @@ fn fmt_duration(secs: u64) -> String {
         format!("{m}:{s:02}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_csv_trims_and_drops_empties() {
+        assert_eq!(split_csv("  a , b ,,c,  "), vec!["a", "b", "c"]);
+        assert!(split_csv("   ").is_empty());
+        assert!(split_csv("").is_empty());
+        assert_eq!(split_csv("only"), vec!["only"]);
+    }
+
+    #[test]
+    fn last_component_of_various_paths() {
+        assert_eq!(last_component("/home/u/Pictures"), "Pictures");
+        assert_eq!(last_component("/home/u/Pictures/"), "Pictures");
+        assert_eq!(last_component("/home/u/Pictures///"), "Pictures");
+        // A remote endpoint keeps its tail component.
+        assert_eq!(last_component("gdrive:Photos/2024"), "2024");
+        // Degenerate inputs don't panic and fall back sensibly.
+        assert_eq!(last_component("/"), "");
+        assert_eq!(last_component(""), "");
+    }
+
+    #[test]
+    fn fmt_speed_scales_units() {
+        assert_eq!(fmt_speed(0), "0.0 B/s");
+        assert_eq!(fmt_speed(512), "512.0 B/s");
+        assert_eq!(fmt_speed(1024), "1.0 KB/s");
+        assert_eq!(fmt_speed(1024 * 1024), "1.0 MB/s");
+        assert_eq!(fmt_speed(3 * 1024 * 1024 * 1024), "3.0 GB/s");
+        // Saturates at the largest unit rather than overflowing the table.
+        assert_eq!(fmt_speed(5 * 1024u64.pow(4)), "5.0 TB/s");
+    }
+
+    #[test]
+    fn fmt_duration_switches_to_hours() {
+        assert_eq!(fmt_duration(0), "0:00");
+        assert_eq!(fmt_duration(9), "0:09");
+        assert_eq!(fmt_duration(75), "1:15");
+        assert_eq!(fmt_duration(3600), "1:00:00");
+        assert_eq!(fmt_duration(3723), "1:02:03");
+    }
+
+    #[test]
+    fn op_str_covers_every_opkind() {
+        assert_eq!(op_str(OpKind::Copy), "copy");
+        assert_eq!(op_str(OpKind::Sync), "sync");
+        assert_eq!(op_str(OpKind::Move), "move");
+        assert_eq!(op_str(OpKind::Bisync), "bisync");
+    }
+
+    #[test]
+    fn kind_str_maps_tools() {
+        assert_eq!(kind_str(Tool::Rclone), "rclone");
+        assert_eq!(kind_str(Tool::Rsync), "rsync");
+    }
+}

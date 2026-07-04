@@ -42,6 +42,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: clippy (gui)
         run: cargo clippy -p cascade-gui --all-targets -- -D warnings
+      - name: test (gui)
+        run: cargo test -p cascade-gui
       - name: build (gui)
         run: cargo build -p cascade-gui --release
       - name: Headless smoke test
