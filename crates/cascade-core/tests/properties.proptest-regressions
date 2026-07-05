@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 94414fcec6d31dcb63f384dbbc479fb51ecb5d155474c72ea189b0eac36a45f5 # shrinks to name = "", args = []
 cc fc7435c5e03d0ea4d4d31232927c8c0d87253964773d1c28776b97478aa95401 # shrinks to secret = "c"
+cc 48426c0e5a519cd752136802cda4ebd5f3819b444d9dd3ed5df5abf0b4918d5c # shrinks to lines = ["<fࡰਲ𖵀"]

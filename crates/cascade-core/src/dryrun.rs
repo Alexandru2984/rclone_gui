@@ -96,9 +96,11 @@ fn classify_rsync(line: &str) -> Option<Change> {
     if !matches!(update_type, b'>' | b'<' | b'c' | b'h') || bytes[1] != b'f' {
         return None;
     }
-    // A brand-new file has all-'+' attributes; anything else is an update.
-    let attrs = &trimmed[2..11];
-    if attrs == "+++++++++" {
+    // A brand-new file has all-'+' attribute flags; anything else is an update.
+    // Compare on the byte slice (always valid) rather than a &str slice, which
+    // would panic if a multi-byte character straddled byte offset 2..11.
+    let attrs = &bytes[2..11];
+    if attrs.iter().all(|&b| b == b'+') {
         Some(Change::Added)
     } else {
         Some(Change::Updated)
@@ -219,6 +221,20 @@ mod tests {
         // Symlink (L) and device/other types are not counted as file changes.
         assert_eq!(classify_rsync(">L+++++++++ link -> target"), None);
         assert_eq!(classify_rsync("cL+++++++++ newlink"), None);
+    }
+
+    #[test]
+    fn rsync_multibyte_after_prefix_does_not_panic() {
+        // Regression: a `<f`/`>f`-looking prefix followed by multi-byte UTF-8
+        // must never panic on a byte-slice that splits a character boundary.
+        // (Found by the dryrun_summary_is_bounded property test.)
+        assert_eq!(classify_rsync("<fࡰਲ𖵀more text here"), Some(Change::Updated));
+        assert_eq!(
+            classify_rsync(">f日本語ですねありがとう"),
+            Some(Change::Updated)
+        );
+        // A genuine all-'+' code is still classified as a new file.
+        assert_eq!(classify_rsync(">f+++++++++ café.txt"), Some(Change::Added));
     }
 
     #[test]
