@@ -142,7 +142,12 @@ pub fn capture_env(
             .await;
         let msg = match result {
             Ok(out) if out.status.success() => {
-                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                // Defense in depth: redact secrets on the success path too, so a
+                // caller can never leak credentials by capturing a secret-bearing
+                // command's stdout. Redaction replaces values in place, so valid
+                // JSON stays valid and structured callers (lsjson, core/version)
+                // still parse.
+                Ok(sanitize::redact(&String::from_utf8_lossy(&out.stdout)))
             }
             Ok(out) => {
                 let err = String::from_utf8_lossy(&out.stderr);
@@ -482,6 +487,22 @@ mod tests {
     async fn capture_reports_failure_as_err() {
         let rx = capture("false", vec![]);
         assert!(rx.recv().await.unwrap().is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_success_output_is_sanitized() {
+        // Even on success, a secret in captured stdout must be redacted.
+        let rx = capture("printf", vec!["--password hunter2\\n".into()]);
+        let out = rx.recv().await.unwrap().unwrap();
+        assert!(!out.contains("hunter2"), "secret leaked via capture: {out}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_leaves_normal_json_intact() {
+        // Redaction must not disturb ordinary structured output.
+        let rx = capture("printf", vec![r#"{"version":"v1.66.0"}"#.into()]);
+        let out = rx.recv().await.unwrap().unwrap();
+        assert_eq!(out, r#"{"version":"v1.66.0"}"#);
     }
 
     #[tokio::test(flavor = "multi_thread")]

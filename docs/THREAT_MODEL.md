@@ -20,8 +20,19 @@ the **user's intent** (UI) → **command construction** (core) → **child proce
 | 11 | **Persisted queue re-running destructive jobs** | A queued mirror/delete auto-runs unattended after an app restart | The queue is persisted for convenience but **never stores secret-bearing specs** (`JobSpec::contains_secret` filter), and a restored queue starts **paused** — the user must explicitly resume before any queued destructive job runs. Queued destructive jobs also pass the confirmation gate at enqueue time. (`views/queue.rs`, `storage/repo.rs`) |
 
 ## Known residual (low) risks
-- **`rclone config create` argv** — provider passwords are still passed as argv during the brief creation call (env has no per-key equivalent); short-lived, single-call exposure only, visible in `/proc/<pid>/cmdline` to other local users on a multi-user host. The process *output* is still sanitized before display.
-- **`capture()` success output is not re-sanitized** — the streaming runner redacts every line, but `process::capture` returns a successful command's stdout verbatim. Safe today because it is only used for non-secret output (`core/version`, `listremotes`, `lsjson`, `systemctl`); do not use it for secret-bearing commands (e.g. `rclone config show`).
+- **`rclone config create` argv** — provider passwords must be passed as argv during
+  the brief creation call: rclone's `RCLONE_CONFIG_*` env overrides define
+  runtime-only remotes and are **not persisted** by `config create` (verified
+  empirically), so there is no env-based alternative. Exposure is single-call,
+  milliseconds long, and only matters against other local users on a shared host.
+  Mitigations: the Add Remote dialog shows an explicit **warning when the typed
+  parameters carry a credential**, recommending OAuth providers or a terminal
+  `rclone config` on shared machines; the process *output* is sanitized before
+  display; OAuth providers (Drive/Dropbox/OneDrive) never pass secrets on argv.
+
+Formerly listed here and since fixed: predictable `/tmp` demo paths (moved to the
+private data dir) and unsanitized `capture()` success output (now redacted like
+every other output path).
 
 ## Non-goals (explicit)
 - Not a sandbox/MAC layer — we rely on the OS user's own filesystem permissions.

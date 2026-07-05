@@ -106,3 +106,6 @@ msgstr ""
 
 msgid "Re-run"
 msgstr ""
+
+msgid "⚠ These parameters include a credential. It is passed to rclone on the command line, which other users of this computer could briefly see in the process list. On a shared machine, prefer an OAuth provider or run “rclone config” in a terminal."
+msgstr ""

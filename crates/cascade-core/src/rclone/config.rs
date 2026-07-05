@@ -135,6 +135,19 @@ pub fn config_delete_args(name: &str) -> Result<Vec<String>> {
     ])
 }
 
+/// Whether a parameter set carries a credential (password/secret/token/key).
+///
+/// Used by the GUI to warn that `rclone config create` receives parameters on
+/// its **argv**, which is world-readable via `/proc/<pid>/cmdline` for the
+/// brief duration of the call. Conservative by design: a false positive shows
+/// a harmless warning; a false negative hides a real exposure.
+pub fn params_contain_secret(params: &[(String, String)]) -> bool {
+    params.iter().any(|(k, _)| {
+        let k = k.to_ascii_lowercase();
+        k.contains("pass") || k.contains("secret") || k.contains("token") || k.contains("key")
+    })
+}
+
 /// Parse a "key=value key2=value2" parameters string into pairs.
 pub fn parse_params(input: &str) -> Result<Vec<(String, String)>> {
     let tokens = crate::security::flags::parse(input)?;
@@ -258,6 +271,28 @@ mod tests {
     fn create_args_without_params_still_obscure() {
         let args = config_create_args("box", "local", &[]).unwrap();
         assert_eq!(args, vec!["config", "create", "box", "local", "--obscure"]);
+    }
+
+    #[test]
+    fn secret_params_are_detected() {
+        let mk = |k: &str| vec![(k.to_string(), "v".to_string())];
+        for k in [
+            "pass",
+            "password",
+            "sftp-pass",
+            "secret_access_key",
+            "client_secret",
+            "token",
+            "key",
+            "key_file", // conservative: warns even for a key *path*
+            "PASSWORD", // case-insensitive
+        ] {
+            assert!(params_contain_secret(&mk(k)), "{k} should warn");
+        }
+        for k in ["host", "user", "region", "url", "vendor", "provider"] {
+            assert!(!params_contain_secret(&mk(k)), "{k} should not warn");
+        }
+        assert!(!params_contain_secret(&[]));
     }
 
     #[test]
