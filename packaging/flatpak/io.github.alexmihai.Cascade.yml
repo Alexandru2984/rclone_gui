@@ -1,6 +1,8 @@
 # Flatpak manifest for Cascade.
 #
-# NOT verified by build here — finish the two marked TODOs, then build:
+# The bundled rsync/rclone checksums below are filled and verified against
+# upstream. One build-time step remains: generate the offline Cargo sources
+# (a sandboxed build has no network), then build:
 #   pip install flatpak-cargo-generator   # or use the upstream script
 #   python flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
 #   flatpak-builder --user --install --force-clean build-dir \
@@ -41,7 +43,7 @@ modules:
     sources:
       - type: archive
         url: https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz
-        sha256: TODO_FILL_RSYNC_SHA256
+        sha256: 2924bcb3a1ed8b551fc101f740b9f0fe0a202b115027647cf69850d65fd88c52
 
   # Bundled rclone (official static binary).
   - name: rclone
@@ -51,7 +53,7 @@ modules:
     sources:
       - type: archive
         url: https://downloads.rclone.org/v1.69.0/rclone-v1.69.0-linux-amd64.zip
-        sha256: TODO_FILL_RCLONE_SHA256
+        sha256: 813892bb54ebc5891664b85c9cfc0e05ee50d39e3d5bb1ddd6d53d0f93a64dc2
         strip-components: 1
 
   # Cascade itself (offline cargo build using the vendored cargo-sources.json).
