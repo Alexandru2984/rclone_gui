@@ -151,7 +151,7 @@ impl QueueView {
         self.next_id.set(id + 1);
 
         let row = adw::ActionRow::builder()
-            .title(&spec.name)
+            .title(crate::views::esc(&spec.name))
             .subtitle(crate::i18n::tr("queued"))
             .build();
 

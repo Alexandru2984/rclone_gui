@@ -280,3 +280,15 @@ msgstr "Rulează din nou"
 
 msgid "⚠ These parameters include a credential. It is passed to rclone on the command line, which other users of this computer could briefly see in the process list. On a shared machine, prefer an OAuth provider or run “rclone config” in a terminal."
 msgstr "⚠ Acești parametri includ o parolă. Ea este transmisă către rclone pe linia de comandă, unde alți utilizatori ai acestui calculator o pot vedea pentru scurt timp în lista de procese. Pe un calculator partajat, preferă un furnizor OAuth sau rulează „rclone config” într-un terminal."
+
+msgid "Download this file"
+msgstr "Descarcă acest fișier"
+
+msgid "Choose a folder to save the file in"
+msgstr "Alege un folder în care să salvezi fișierul"
+
+msgid "Downloading “%s”…"
+msgstr "Se descarcă „%s”…"
+
+msgid "✓ Saved “%s” to %d"
+msgstr "✓ „%s” salvat în %d"

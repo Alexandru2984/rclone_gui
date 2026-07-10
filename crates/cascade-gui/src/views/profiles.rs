@@ -72,8 +72,8 @@ impl ProfilesView {
 
         for p in profiles {
             let row = adw::ActionRow::builder()
-                .title(&p.name)
-                .subtitle(p.spec.preview().unwrap_or_default())
+                .title(crate::views::esc(&p.name))
+                .subtitle(crate::views::esc(&p.spec.preview().unwrap_or_default()))
                 .build();
             row.add_css_class("property");
 

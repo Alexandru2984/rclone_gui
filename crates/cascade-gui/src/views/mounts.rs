@@ -249,7 +249,7 @@ impl MountsView {
         self.next_id.set(id + 1);
 
         let row = adw::ActionRow::builder()
-            .title(format!("{path}  →  {mp}"))
+            .title(crate::views::esc(&format!("{path}  →  {mp}")))
             .subtitle(crate::i18n::tr("mounting…"))
             .build();
         row.add_prefix(&gtk::Image::from_icon_name("folder-remote-symbolic"));
@@ -290,7 +290,9 @@ impl MountsView {
         glib::spawn_future_local(async move {
             while let Ok(ev) = events.recv().await {
                 match ev {
-                    ProcessEvent::Error(e) => row.set_subtitle(&format!("error: {e}")),
+                    ProcessEvent::Error(e) => {
+                        row.set_subtitle(&crate::views::esc(&format!("error: {e}")))
+                    }
                     ProcessEvent::Finished { success, .. } => {
                         exited.set(true);
                         if !success {
@@ -319,7 +321,7 @@ impl MountsView {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
                     if let Some(row) = this.row_of(id) {
-                        row.set_subtitle(&format!("unmount failed: {e}"));
+                        row.set_subtitle(&crate::views::esc(&format!("unmount failed: {e}")));
                     }
                 }
                 Err(_) => {}

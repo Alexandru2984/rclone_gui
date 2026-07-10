@@ -94,12 +94,14 @@ impl NewJobView {
     /// Set the source path (used by the Remote/Local browser pickers).
     pub fn set_source(&self, path: &str) {
         self.inputs.source.set_text(path);
+        self.inputs.select_rclone_if_remote(path);
         self.inputs.refresh_preview();
     }
 
     /// Set the destination path (used by the Remote/Local browser pickers).
     pub fn set_destination(&self, path: &str) {
         self.inputs.dest.set_text(path);
+        self.inputs.select_rclone_if_remote(path);
         self.inputs.refresh_preview();
     }
 }
@@ -564,6 +566,15 @@ impl Inputs {
         self.refresh_preview();
     }
 
+    /// An rclone remote (e.g. `gdrive:`) can only be driven by rclone, so switch
+    /// the Tool combo to rclone when a picked path names one. (Tool index 1 =
+    /// rclone; see the StringList in `build`.)
+    fn select_rclone_if_remote(&self, path: &str) {
+        if path::looks_like_rclone_remote(path) {
+            self.tool.set_selected(1);
+        }
+    }
+
     fn cancel(&self) {
         if let Some(handle) = self.current.borrow().as_ref() {
             handle.cancel();
@@ -595,6 +606,19 @@ impl Inputs {
         } else {
             Tool::Rsync
         };
+        // Catch the common mistake of pointing rsync at an rclone remote: rsync
+        // would try to SSH to a host named e.g. "gdrive". Give an actionable
+        // error instead of a confusing "could not resolve hostname".
+        if tool == Tool::Rsync {
+            for (label, p) in [("Source", &source), ("Destination", &dest)] {
+                if path::looks_like_rclone_remote(p) {
+                    let name = p.split(':').next().unwrap_or("");
+                    return Err(format!(
+                        "{label} “{p}” looks like an rclone remote. Switch the Tool to rclone — rsync would try to connect over SSH to a host named “{name}”."
+                    ));
+                }
+            }
+        }
         let op = match self.op.selected() {
             1 => OpKind::Sync,
             2 => OpKind::Move,

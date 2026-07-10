@@ -318,7 +318,7 @@ impl RemoteBrowserView {
                 fmt_size(entry.size)
             };
             let row = adw::ActionRow::builder()
-                .title(&entry.name)
+                .title(crate::views::esc(&entry.name))
                 .subtitle(&subtitle)
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(if entry.is_dir {
@@ -328,6 +328,7 @@ impl RemoteBrowserView {
             }));
 
             if entry.is_dir {
+                // Click a folder to descend into it.
                 row.set_activatable(true);
                 let this = self.clone();
                 let name = entry.name.clone();
@@ -341,9 +342,76 @@ impl RemoteBrowserView {
                     drop(s);
                     this.reload();
                 });
+            } else {
+                // Click a file (or its download button) to save it locally.
+                row.set_activatable(true);
+                let dl = gtk::Button::from_icon_name("document-save-symbolic");
+                dl.add_css_class("flat");
+                dl.set_valign(gtk::Align::Center);
+                dl.set_tooltip_text(Some(&crate::i18n::tr("Download this file")));
+                row.add_suffix(&dl);
+                let name = entry.name.clone();
+                {
+                    let this = self.clone();
+                    let name = name.clone();
+                    row.connect_activated(move |_| this.download(&name));
+                }
+                {
+                    let this = self.clone();
+                    dl.connect_clicked(move |_| this.download(&name));
+                }
             }
             self.list.append(&row);
         }
+    }
+
+    /// Download the file `name` from the current folder: ask for a destination
+    /// folder, then `rclone copy <remote:path/name> <folder>`.
+    fn download(&self, name: &str) {
+        let Some(remote) = self.current_remote() else {
+            return;
+        };
+        let sub = self.state.borrow().sub.clone();
+        let file_sub = if sub.is_empty() {
+            name.to_string()
+        } else {
+            format!("{sub}/{name}")
+        };
+        let src = browse::join(&remote, &file_sub);
+
+        let dialog = gtk::FileDialog::builder()
+            .title(crate::i18n::tr("Choose a folder to save the file in"))
+            .build();
+        let this = self.clone();
+        let name = name.to_string();
+        dialog.select_folder(Some(&self.window), gio::Cancellable::NONE, move |res| {
+            if let Ok(folder) = res {
+                if let Some(dir) = folder.path() {
+                    this.run_download(&src, &dir.to_string_lossy(), &name);
+                }
+            }
+        });
+    }
+
+    /// Run the actual `rclone copy` of a single file into `dest_dir`.
+    fn run_download(&self, src: &str, dest_dir: &str, name: &str) {
+        self.status.set_visible(true);
+        self.status
+            .set_label(&crate::i18n::tr("Downloading “%s”…").replace("%s", name));
+        // `rclone copy <file> <dir>` places the file inside dest_dir.
+        let args = vec!["copy".to_string(), src.to_string(), dest_dir.to_string()];
+        let rx = capture("rclone", args);
+        let this = self.clone();
+        let done = crate::i18n::tr("✓ Saved “%s” to %d")
+            .replace("%s", name)
+            .replace("%d", dest_dir);
+        glib::spawn_future_local(async move {
+            match rx.recv().await {
+                Ok(Ok(_)) => this.status.set_label(&done),
+                Ok(Err(e)) => this.status.set_label(&format!("✗ {e}")),
+                Err(_) => {}
+            }
+        });
     }
 }
 

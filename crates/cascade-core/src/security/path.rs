@@ -106,6 +106,24 @@ pub fn is_remote_endpoint(s: &str) -> bool {
     }
 }
 
+/// Returns `true` if `s` specifically names an **rclone** remote (`name:path`),
+/// as opposed to an rsync/SSH endpoint (`user@host:path`) or a local path.
+///
+/// rclone remote names are restricted to letters, digits, `_`, `-` and space;
+/// an `@` (user) or `.` (hostname) means it is an SSH target, which rsync — not
+/// rclone — should handle. Used to catch the common mistake of pointing rsync
+/// at an rclone remote (rsync would treat `gdrive:` as the host `gdrive`).
+pub fn looks_like_rclone_remote(s: &str) -> bool {
+    match s.find(':') {
+        Some(idx) if idx > 0 => {
+            let name = &s[..idx];
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ' ')
+        }
+        _ => false,
+    }
+}
+
 /// Validate a local path intended as a source or destination.
 ///
 /// Rejects empty/whitespace paths, paths containing `..`, the filesystem root
@@ -319,6 +337,22 @@ mod tests {
         assert!(!is_remote_endpoint("/home/tester"));
         assert!(!is_remote_endpoint("./relative/path"));
         assert!(!is_remote_endpoint("/has/colon:in/path"));
+    }
+
+    #[test]
+    fn distinguishes_rclone_remotes_from_ssh_and_local() {
+        // rclone remotes (simple names).
+        assert!(looks_like_rclone_remote("gdrive:"));
+        assert!(looks_like_rclone_remote("backup_onedrive:photos/2024"));
+        assert!(looks_like_rclone_remote("my drive:"));
+        // SSH / scp targets are NOT rclone remotes.
+        assert!(!looks_like_rclone_remote("user@host:/path"));
+        assert!(!looks_like_rclone_remote("example.com:/srv"));
+        // Local paths and bare strings.
+        assert!(!looks_like_rclone_remote("/home/u/data"));
+        assert!(!looks_like_rclone_remote("./rel"));
+        assert!(!looks_like_rclone_remote("noselector"));
+        assert!(!looks_like_rclone_remote(":leading"));
     }
 
     #[test]

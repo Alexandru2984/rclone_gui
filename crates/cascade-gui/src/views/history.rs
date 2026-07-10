@@ -98,8 +98,8 @@ fn row_for(run: &RunRecord) -> adw::ActionRow {
         title.push_str("  (dry-run)");
     }
     let row = adw::ActionRow::builder()
-        .title(title)
-        .subtitle(&run.argv_preview)
+        .title(crate::views::esc(&title))
+        .subtitle(crate::views::esc(&run.argv_preview))
         .build();
     row.add_prefix(&kind_icon(&run.kind));
     row.add_suffix(&status_pill(&run.status));

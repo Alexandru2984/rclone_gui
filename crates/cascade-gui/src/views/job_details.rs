@@ -56,7 +56,7 @@ pub fn present(
 
     let cmd_row = adw::ActionRow::builder()
         .title(crate::i18n::tr("Command"))
-        .subtitle(&run.argv_preview)
+        .subtitle(crate::views::esc(&run.argv_preview))
         .build();
     cmd_row.add_css_class("property");
     let copy = gtk::Button::builder()
