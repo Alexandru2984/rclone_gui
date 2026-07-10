@@ -208,10 +208,19 @@ async fn drive(
     let read_stdout = stream_lines(stdout, ev.clone(), parser.clone(), false);
     let read_stderr = stream_lines(stderr, ev.clone(), parser.clone(), true);
 
+    // Only an EXPLICIT cancel() may terminate the child. If the RunHandle is
+    // merely dropped, the channel closes with Err — that must detach the child,
+    // not kill it (an OAuth `rclone config create` outlives its handle while
+    // the user signs in in the browser), so the future parks forever.
+    let explicit_cancel = async {
+        if cancel_rx.recv().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
     let wait_or_cancel = async {
         tokio::select! {
             status = child.wait() => status.map_err(|e| e.to_string()),
-            _ = cancel_rx.recv() => {
+            _ = explicit_cancel => {
                 let _ = ev.send(ProcessEvent::Error("cancelled by user".into())).await;
                 graceful_terminate(&mut child).await
             }
@@ -520,6 +529,29 @@ mod tests {
             vec![("CASCADE_CAP_VAR".into(), "cap-value".into())],
         );
         assert_eq!(rx.recv().await.unwrap().unwrap().trim(), "cap-value");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_the_handle_detaches_instead_of_killing() {
+        // Regression: dropping the RunHandle used to close the cancel channel,
+        // which the runner treated as a cancel and SIGTERMed the child — this
+        // broke OAuth `rclone config create` (killed before the browser opened).
+        // `sleep` exits 0 only if it was NOT killed.
+        let h = spawn("sleep", vec!["0.3".into()]);
+        let events = h.events.clone();
+        drop(h);
+        let mut finished_ok = false;
+        while let Ok(ev) = events.recv().await {
+            match ev {
+                ProcessEvent::Error(e) => panic!("spurious error after drop: {e}"),
+                ProcessEvent::Finished { success, .. } => {
+                    finished_ok = success;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(finished_ok, "child was killed when the handle dropped");
     }
 
     #[tokio::test(flavor = "multi_thread")]
