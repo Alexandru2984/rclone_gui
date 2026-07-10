@@ -457,6 +457,13 @@ fn fmt_progress(p: &cascade_core::job::Progress) -> String {
     if let Some(pct) = p.percent {
         s.push_str(&format!(" · {pct:.0}%"));
     }
+    if let Some(total) = p.bytes_total {
+        s.push_str(&format!(
+            " · {} / {}",
+            fmt_bytes(p.bytes_transferred),
+            fmt_bytes(total)
+        ));
+    }
     if let Some(bps) = p.speed_bps {
         s.push_str(&format!(" · {}", fmt_speed(bps)));
     }
@@ -464,8 +471,12 @@ fn fmt_progress(p: &cascade_core::job::Progress) -> String {
 }
 
 fn fmt_speed(bps: u64) -> String {
-    const UNITS: [&str; 5] = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
-    let mut v = bps as f64;
+    format!("{}/s", fmt_bytes(bps))
+}
+
+fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
     let mut i = 0;
     while v >= 1024.0 && i < UNITS.len() - 1 {
         v /= 1024.0;

@@ -17,6 +17,9 @@ use crate::Tool;
 pub struct Progress {
     pub percent: Option<f32>,
     pub bytes_transferred: u64,
+    /// Total bytes of the whole transfer, when the tool reports it (rclone
+    /// stats do; rsync `--info=progress2` does not).
+    pub bytes_total: Option<u64>,
     pub files_done: u64,
     pub speed_bps: Option<u64>,
     /// Estimated seconds remaining, when known.

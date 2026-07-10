@@ -87,29 +87,37 @@ pub fn parse_rsync(line: &str) -> Option<Progress> {
     Some(Progress {
         percent,
         bytes_transferred,
+        bytes_total: None, // progress2 reports no overall size
         files_done: 0,
         speed_bps,
         eta_secs,
     })
 }
 
-/// Parse an rclone `--stats-one-line` line.
+/// Parse an rclone periodic-stats line.
 ///
-/// Example: `Transferred:   1.234 MiB / 4.567 MiB, 27%, 1.234 MiB/s, ETA 2m42s`
+/// Two real-world shapes (both end in a `B/s` rate):
+/// - `--stats-one-line` (what Cascade passes), **no prefix**:
+///   `   10.027 MiB / 30 MiB, 33%, 10.014 MiB/s, ETA 1s`
+///   possibly with a journald-style `<5>NOTICE:` prefix.
+/// - the multi-line block header: `Transferred:   1.234 MiB / 4.567 MiB, 27%, …`
 pub fn parse_rclone(line: &str) -> Option<Progress> {
-    if !line.contains("Transferred:") {
+    // Cheap gate common to both formats before running the regex.
+    if !line.contains("B/s") {
         return None;
     }
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         Regex::new(
-            r"(?P<done>[\d.]+)\s*(?P<dunit>[KMGT]?i?B)\s*/\s*[\d.]+\s*[KMGT]?i?B,\s*(?P<pct>\d{1,3})%,\s*(?P<rate>[\d.]+)\s*(?P<runit>[KMGT]?i?B)/s(?:,\s*ETA\s*(?P<eta>\S+))?",
+            r"(?P<done>[\d.]+)\s*(?P<dunit>[KMGT]?i?B)\s*/\s*(?P<total>[\d.]+)\s*(?P<tunit>[KMGT]?i?B),\s*(?P<pct>\d{1,3})%,\s*(?P<rate>[\d.]+)\s*(?P<runit>[KMGT]?i?B)/s(?:,\s*ETA\s*(?P<eta>\S+))?",
         )
         .unwrap()
     });
     let caps = re.captures(line)?;
     let done: f64 = caps["done"].parse().unwrap_or(0.0);
     let bytes_transferred = (done * unit_factor(&caps["dunit"])) as u64;
+    let total: f64 = caps["total"].parse().unwrap_or(0.0);
+    let bytes_total = Some((total * unit_factor(&caps["tunit"])) as u64).filter(|t| *t > 0);
     let percent = caps["pct"].parse::<f32>().ok();
     let rate: f64 = caps["rate"].parse().unwrap_or(0.0);
     let speed_bps = Some((rate * unit_factor(&caps["runit"])) as u64);
@@ -122,6 +130,7 @@ pub fn parse_rclone(line: &str) -> Option<Progress> {
     Some(Progress {
         percent,
         bytes_transferred,
+        bytes_total,
         files_done: 0,
         speed_bps,
         eta_secs,
@@ -241,6 +250,36 @@ mod tests {
         // 100% completion line must clamp cleanly to a real percent value.
         let p = parse_rsync("4,096 100% 0.00kB/s 0:00:00").unwrap();
         assert_eq!(p.percent, Some(100.0));
+    }
+
+    #[test]
+    fn rclone_one_line_format_without_transferred_prefix() {
+        // The REAL `--stats-one-line` output has no "Transferred:" prefix —
+        // captured verbatim from rclone with --stats-log-level NOTICE.
+        let p =
+            parse_rclone("<5>NOTICE:    10.027 MiB / 30 MiB, 33%, 10.014 MiB/s, ETA 1s").unwrap();
+        assert_eq!(p.percent, Some(33.0));
+        assert_eq!(p.bytes_transferred, (10.027 * 1024.0 * 1024.0) as u64);
+        assert_eq!(p.bytes_total, Some(30 * 1024 * 1024));
+        assert_eq!(p.eta_secs, Some(1));
+
+        // Zero rate + unknown ETA, also verbatim.
+        let p = parse_rclone("<5>NOTICE:    10.027 MiB / 30 MiB, 33%, 0 B/s, ETA -").unwrap();
+        assert_eq!(p.speed_bps, Some(0));
+        assert_eq!(p.eta_secs, None);
+    }
+
+    #[test]
+    fn rclone_total_is_captured_from_block_format_too() {
+        let p =
+            parse_rclone("Transferred:   1.000 MiB / 4.000 MiB, 25%, 2.000 MiB/s, ETA 2s").unwrap();
+        assert_eq!(p.bytes_total, Some(4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn rsync_has_no_total() {
+        let p = parse_rsync("1,024 10% 1.00kB/s 0:00:09").unwrap();
+        assert_eq!(p.bytes_total, None);
     }
 
     #[test]

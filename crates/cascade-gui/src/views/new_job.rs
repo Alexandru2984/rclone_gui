@@ -992,6 +992,17 @@ impl Inputs {
         if let Some(pct) = p.percent {
             parts.push(format!("{pct:.0}%"));
         }
+        // Show how much of how much — the total when the tool reports one
+        // (rclone), otherwise just the running byte count.
+        if let Some(total) = p.bytes_total {
+            parts.push(format!(
+                "{} / {}",
+                fmt_bytes(p.bytes_transferred),
+                fmt_bytes(total)
+            ));
+        } else if p.bytes_transferred > 0 {
+            parts.push(fmt_bytes(p.bytes_transferred));
+        }
         if let Some(s) = p.speed_bps {
             parts.push(fmt_speed(s));
         }
@@ -1134,8 +1145,13 @@ fn last_component(p: &str) -> String {
 
 /// Human-readable transfer rate from bytes/second.
 fn fmt_speed(bps: u64) -> String {
-    const UNITS: [&str; 5] = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
-    let mut v = bps as f64;
+    format!("{}/s", fmt_bytes(bps))
+}
+
+/// Human-readable byte count (binary units).
+fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
     let mut i = 0;
     while v >= 1024.0 && i < UNITS.len() - 1 {
         v /= 1024.0;
@@ -1187,6 +1203,13 @@ mod tests {
         assert_eq!(fmt_speed(3 * 1024 * 1024 * 1024), "3.0 GB/s");
         // Saturates at the largest unit rather than overflowing the table.
         assert_eq!(fmt_speed(5 * 1024u64.pow(4)), "5.0 TB/s");
+    }
+
+    #[test]
+    fn fmt_bytes_scales_units() {
+        assert_eq!(fmt_bytes(0), "0.0 B");
+        assert_eq!(fmt_bytes(30 * 1024 * 1024), "30.0 MB");
+        assert_eq!(fmt_bytes(1024u64.pow(3)), "1.0 GB");
     }
 
     #[test]

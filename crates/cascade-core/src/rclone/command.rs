@@ -184,10 +184,15 @@ pub fn build_args(
         _ => args.push("-vv".into()),
     }
     if opts.stats {
-        // periodic, parseable one-line progress on stderr
+        // Periodic, parseable one-line progress on stderr. rclone emits the
+        // periodic stats at INFO level, which its default (NOTICE) verbosity
+        // suppresses — without --stats-log-level NOTICE nothing is printed at
+        // all and the GUI shows no progress (verified against rclone 1.60+).
         args.push("--stats".into());
         args.push("1s".into());
         args.push("--stats-one-line".into());
+        args.push("--stats-log-level".into());
+        args.push("NOTICE".into());
     }
     // bisync establishes its baseline with --resync on the first run.
     if opts.resync && op == RcloneOp::Bisync {
