@@ -145,33 +145,50 @@ impl JobSpec {
         self.tool.binary()
     }
 
+    /// The rclone [`RcloneOp`] for this spec's operation.
+    pub fn rclone_op(&self) -> RcloneOp {
+        match self.op {
+            OpKind::Copy => RcloneOp::Copy,
+            OpKind::Sync => RcloneOp::Sync,
+            OpKind::Move => RcloneOp::Move,
+            OpKind::Bisync => RcloneOp::Bisync,
+        }
+    }
+
+    /// Map this spec's advanced options onto [`RcloneOptions`]. Shared by the
+    /// argv builder and the RC (Remote Control) payload builder so both stay in
+    /// step.
+    pub fn rclone_options(&self) -> RcloneOptions {
+        let o = &self.options;
+        RcloneOptions {
+            dry_run: self.dry_run,
+            transfers: o.transfers,
+            checkers: o.checkers,
+            checksum: o.checksum,
+            bwlimit: o.bwlimit.clone(),
+            retries: o.retries,
+            max_delete: o.max_delete,
+            backup_dir: o.backup_dir.clone(),
+            excludes: o.excludes.clone(),
+            includes: o.includes.clone(),
+            resync: o.resync,
+            extra_flags: o.extra_flags.clone(),
+            ..Default::default()
+        }
+    }
+
     /// Build the concrete argv. Never produces a shell string.
     pub fn build_argv(&self) -> Result<Vec<String>> {
         let o = &self.options;
         match self.tool {
             Tool::Rclone => {
-                let op = match self.op {
-                    OpKind::Copy => RcloneOp::Copy,
-                    OpKind::Sync => RcloneOp::Sync,
-                    OpKind::Move => RcloneOp::Move,
-                    OpKind::Bisync => RcloneOp::Bisync,
-                };
-                let opts = RcloneOptions {
-                    dry_run: self.dry_run,
-                    transfers: o.transfers,
-                    checkers: o.checkers,
-                    checksum: o.checksum,
-                    bwlimit: o.bwlimit.clone(),
-                    retries: o.retries,
-                    max_delete: o.max_delete,
-                    backup_dir: o.backup_dir.clone(),
-                    excludes: o.excludes.clone(),
-                    includes: o.includes.clone(),
-                    resync: o.resync,
-                    extra_flags: o.extra_flags.clone(),
-                    ..Default::default()
-                };
-                rclone_cmd::build_args(op, &self.source, Some(&self.destination), &opts)
+                let opts = self.rclone_options();
+                rclone_cmd::build_args(
+                    self.rclone_op(),
+                    &self.source,
+                    Some(&self.destination),
+                    &opts,
+                )
             }
             Tool::Rsync => {
                 if self.op == OpKind::Bisync {

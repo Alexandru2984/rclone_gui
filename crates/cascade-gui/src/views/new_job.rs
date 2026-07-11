@@ -3,9 +3,10 @@
 //!
 //! This is the heart of Phase 1: a full, safe, end-to-end flow for both tools.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::gio;
@@ -13,7 +14,11 @@ use gtk::gio;
 use cascade_core::dryrun::DryRunSummary;
 use cascade_core::job::{AdvancedOptions, JobSpec, OpKind};
 use cascade_core::logs::LogWriter;
-use cascade_core::process::{progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle};
+use cascade_core::process::{
+    capture_env, progress, spawn_with_parser, LineParser, ProcessEvent, RunHandle,
+};
+use cascade_core::rclone::rc::{self, RcStats, RcTransfer};
+use cascade_core::rclone::rcd::Rcd;
 use cascade_core::security::destructive::RiskLevel;
 use cascade_core::security::{flags, path};
 use cascade_core::Tool;
@@ -56,6 +61,7 @@ struct Inputs {
 
     progress_bar: gtk::ProgressBar,
     progress_label: gtk::Label,
+    files_box: gtk::Box,
 
     log_view: gtk::TextView,
     log_buffer: gtk::TextBuffer,
@@ -67,6 +73,10 @@ struct Inputs {
 
     /// The currently running child, if any — kept so Cancel can reach it.
     current: RefCell<Option<RunHandle>>,
+    /// The RC daemon driving the current rclone job (RC path), if any.
+    rc_daemon: RefCell<Option<Rc<Rcd>>>,
+    /// Set by Cancel to break the RC poll loop.
+    cancelled: Rc<Cell<bool>>,
 
     /// Callback to refresh sibling screens (History, Profiles) after a change.
     on_changed: Rc<dyn Fn()>,
@@ -284,9 +294,15 @@ pub fn build(
         .visible(false)
         .css_classes(vec!["dim-label".to_string(), "caption".to_string()])
         .build();
+    // Per-file transfer monitor (RC path): one row per in-flight file, rebuilt
+    // on each stats poll. Empty (and hidden) on the CLI path.
+    let files_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    files_box.set_visible(false);
+    files_box.set_margin_top(4);
     let progress_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
     progress_box.append(&progress_bar);
     progress_box.append(&progress_label);
+    progress_box.append(&files_box);
     let progress_group = adw::PreferencesGroup::builder()
         .title(crate::i18n::tr("Progress"))
         .build();
@@ -385,6 +401,7 @@ pub fn build(
         risk,
         progress_bar,
         progress_label,
+        files_box,
         log_view,
         log_buffer,
         run_btn,
@@ -392,6 +409,8 @@ pub fn build(
         cancel_btn,
         save_btn,
         current: RefCell::new(None),
+        rc_daemon: RefCell::new(None),
+        cancelled: Rc::new(Cell::new(false)),
         on_changed,
         enqueue: on_enqueue,
     });
@@ -576,8 +595,16 @@ impl Inputs {
     }
 
     fn cancel(&self) {
+        // CLI path: signal the child.
         if let Some(handle) = self.current.borrow().as_ref() {
             handle.cancel();
+            self.log_line("[cancelling…]");
+            self.cancel_btn.set_sensitive(false);
+        }
+        // RC path: flag the poll loop and stop the daemon (which ends the job).
+        if let Some(rcd) = self.rc_daemon.borrow().as_ref() {
+            self.cancelled.set(true);
+            rcd.stop();
             self.log_line("[cancelling…]");
             self.cancel_btn.set_sensitive(false);
         }
@@ -887,6 +914,14 @@ impl Inputs {
         self.log_line(&format!("$ {preview}"));
         self.set_running(true);
 
+        // Eligible rclone transfers run through the RC daemon, which gives a
+        // real per-file monitor. Everything else (rsync, dry-run, bisync, custom
+        // flags) stays on the CLI streaming path.
+        if rc_eligible(&spec) {
+            self.run_rc(spec, run_id, preview);
+            return;
+        }
+
         // Pick the right progress parser for the tool.
         let parser: LineParser = match spec.tool {
             Tool::Rsync => Arc::new(progress::parse_rsync),
@@ -978,6 +1013,188 @@ impl Inputs {
             this.notify_done(&job_name, !failed);
             (this.on_changed)();
         });
+    }
+
+    /// Run an eligible rclone job through the RC daemon: start `rcd`, submit the
+    /// transfer async, then poll `core/stats` (per-file) and `job/status` until
+    /// it finishes. Persisting the job/run already happened in [`Self::run`].
+    fn run_rc(self: &Rc<Self>, spec: JobSpec, run_id: i64, preview: String) {
+        let rcd = match Rcd::start() {
+            Ok(r) => Rc::new(r),
+            Err(e) => {
+                self.log_line(&format!("✗ could not start the rclone RC daemon: {e}"));
+                self.finalize_rc(run_id, false, Some("RC daemon failed to start"), &spec.name);
+                return;
+            }
+        };
+        self.cancelled.set(false);
+        *self.rc_daemon.borrow_mut() = Some(rcd.clone());
+        self.files_box.set_visible(true);
+
+        let group = format!("job/{run_id}");
+        let method = rc::method_for(spec.rclone_op()).unwrap_or("sync/copy");
+        let payload = rc::sync_payload(
+            &spec.source,
+            &spec.destination,
+            &group,
+            spec.dry_run,
+            &spec.rclone_options(),
+        );
+        let job_name = spec.name.clone();
+        let stats_req = format!("{{\"group\":\"{group}\"}}");
+        let this = self.clone();
+
+        glib::spawn_future_local(async move {
+            let mut log = LogWriter::create(&this.ctx.paths.log_dir, run_id).ok();
+            if let Some(w) = log.as_mut() {
+                let _ = w.write_line(&format!("$ {preview}"));
+            }
+
+            // Submit the transfer, retrying briefly while the daemon binds.
+            let mut jobid = None;
+            for _ in 0..20 {
+                glib::timeout_future(Duration::from_millis(150)).await;
+                if this.cancelled.get() {
+                    break;
+                }
+                let rx = capture_env("rclone", rcd.rc_args_json(method, &payload), rcd.rc_env());
+                if let Ok(Ok(out)) = rx.recv().await {
+                    if let Some(id) = rc::parse_jobid(&out) {
+                        jobid = Some(id);
+                        break;
+                    }
+                }
+            }
+            let Some(jobid) = jobid else {
+                let cancelled = this.cancelled.get();
+                let msg = if cancelled {
+                    "cancelled by user"
+                } else {
+                    "could not start the RC transfer"
+                };
+                this.log_line(&format!("[{msg}]"));
+                this.finalize_rc(run_id, false, Some(msg), &job_name);
+                return;
+            };
+            this.log_line(&format!("[RC job {jobid} started]"));
+            let status_req = format!("{{\"jobid\":{jobid}}}");
+
+            // Poll ~1/s: refresh the monitor, then check for completion. Success
+            // is simply "no error recorded".
+            let mut err: Option<String> = None;
+            loop {
+                glib::timeout_future(Duration::from_millis(1000)).await;
+                if this.cancelled.get() {
+                    err = Some("cancelled by user".to_string());
+                    break;
+                }
+                let rx = capture_env(
+                    "rclone",
+                    rcd.rc_args_json("core/stats", &stats_req),
+                    rcd.rc_env(),
+                );
+                if let Ok(Ok(out)) = rx.recv().await {
+                    if let Some(stats) = rc::parse_core_stats(&out) {
+                        this.show_rc_stats(&stats);
+                    }
+                }
+                let rx = capture_env(
+                    "rclone",
+                    rcd.rc_args_json("job/status", &status_req),
+                    rcd.rc_env(),
+                );
+                match rx.recv().await {
+                    Ok(Ok(out)) => {
+                        if let Some(st) = rc::parse_job_status(&out) {
+                            if st.finished {
+                                if !st.success {
+                                    err = Some(st.error);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // Daemon gone (e.g. cancelled) — treat as ended.
+                    _ => {
+                        err = err.or_else(|| Some("RC daemon stopped".to_string()));
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = err.as_deref() {
+                this.log_line(&format!("[error] {e}"));
+                if let Some(w) = log.as_mut() {
+                    let _ = w.write_line(&format!("[error] {e}"));
+                }
+            }
+            if let Some(w) = log.as_ref() {
+                let _ = this.ctx.store.insert_run_log(
+                    run_id,
+                    &w.path().to_string_lossy(),
+                    &w.counts_json(),
+                );
+            }
+            this.finalize_rc(run_id, err.is_none(), err.as_deref(), &job_name);
+        });
+    }
+
+    /// Record the terminal state of an RC run, stop the daemon, reset the UI.
+    fn finalize_rc(&self, run_id: i64, ok: bool, err: Option<&str>, job_name: &str) {
+        let status = if ok { "completed" } else { "failed" };
+        let _ = self.ctx.store.finish_run(run_id, status, None, err);
+        if let Some(rcd) = self.rc_daemon.borrow_mut().take() {
+            rcd.stop();
+        }
+        self.clear_files();
+        self.files_box.set_visible(false);
+        self.set_running(false);
+        if ok {
+            self.progress_bar.set_fraction(1.0);
+        }
+        self.log_line(&format!("[finished success={ok}]"));
+        self.notify_done(job_name, ok);
+        (self.on_changed)();
+    }
+
+    /// Update the overall bar/label and rebuild the per-file rows from RC stats.
+    fn show_rc_stats(&self, s: &RcStats) {
+        match s.fraction() {
+            Some(f) => self.progress_bar.set_fraction(f),
+            None => self.progress_bar.pulse(),
+        }
+        let mut parts = Vec::new();
+        parts.push(format!(
+            "{} / {} files",
+            s.transfers_done, s.transfers_total
+        ));
+        if s.total_bytes > 0 {
+            parts.push(format!(
+                "{} / {}",
+                fmt_bytes(s.bytes),
+                fmt_bytes(s.total_bytes)
+            ));
+        }
+        if s.speed_bps > 0 {
+            parts.push(fmt_speed(s.speed_bps));
+        }
+        if let Some(eta) = s.eta_secs {
+            parts.push(format!("ETA {}", fmt_duration(eta)));
+        }
+        if s.errors > 0 {
+            parts.push(format!("{} errors", s.errors));
+        }
+        self.progress_label.set_label(&parts.join("  ·  "));
+
+        self.clear_files();
+        for f in &s.transferring {
+            self.files_box.append(&file_row(f));
+        }
+    }
+
+    fn clear_files(&self) {
+        while let Some(child) = self.files_box.first_child() {
+            self.files_box.remove(&child);
+        }
     }
 
     /// Render a progress snapshot onto the bar + label.
@@ -1116,6 +1333,51 @@ fn connect_browse(inputs: &Rc<Inputs>, row: &adw::EntryRow) {
             });
         });
     }
+}
+
+/// Whether a job should run through the rclone RC daemon (per-file monitor).
+/// rsync, dry-runs, bisync, and jobs with custom flags stay on the CLI path.
+fn rc_eligible(spec: &JobSpec) -> bool {
+    spec.tool == Tool::Rclone
+        && !spec.dry_run
+        && spec.options.extra_flags.is_empty()
+        && matches!(spec.op, OpKind::Copy | OpKind::Sync | OpKind::Move)
+}
+
+/// A per-file monitor row: name, a mini progress bar, and a metadata line.
+fn file_row(f: &RcTransfer) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    // Plain GtkLabel does not interpret Pango markup, so filenames with '&' are
+    // safe here without escaping.
+    let name = gtk::Label::builder()
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .css_classes(vec!["caption-heading".to_string()])
+        .label(&f.name)
+        .build();
+    let bar = gtk::ProgressBar::new();
+    bar.set_fraction((f.percentage as f64 / 100.0).clamp(0.0, 1.0));
+
+    let mut meta = format!("{}%", f.percentage);
+    if f.speed_bps > 0 {
+        meta.push_str(&format!("  ·  {}", fmt_speed(f.speed_bps)));
+    }
+    if let Some(eta) = f.eta_secs {
+        meta.push_str(&format!("  ·  ETA {}", fmt_duration(eta)));
+    }
+    if let Some(size) = f.size {
+        meta.push_str(&format!("  ·  {}", fmt_bytes(size)));
+    }
+    let meta_label = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(vec!["dim-label".to_string(), "caption".to_string()])
+        .label(&meta)
+        .build();
+
+    row.append(&name);
+    row.append(&bar);
+    row.append(&meta_label);
+    row.upcast()
 }
 
 fn kind_str(tool: Tool) -> &'static str {
