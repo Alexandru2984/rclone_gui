@@ -8,6 +8,7 @@ pub mod command;
 pub mod config;
 pub mod detect;
 pub mod mount;
+pub mod rc;
 pub mod rcd;
 
 pub use browse::Entry;

@@ -421,6 +421,92 @@ fn rcd_daemon_starts_answers_and_stops() {
 }
 
 #[test]
+fn rc_driven_transfer_runs_and_reports_stats() {
+    use cascade_core::process::capture_env;
+    use cascade_core::rclone::command::RcloneOptions;
+    use cascade_core::rclone::rc;
+    use cascade_core::rclone::rcd::Rcd;
+    use std::time::Duration;
+
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(src.join("a.bin"), vec![1u8; 200_000]).unwrap();
+    std::fs::write(src.join("b.bin"), vec![2u8; 200_000]).unwrap();
+
+    let rcd = Rcd::start().expect("rcd starts");
+    std::thread::sleep(Duration::from_millis(800));
+
+    // Submit the copy as an async RC job scoped to a unique group.
+    let group = "job/e2e";
+    let payload = rc::sync_payload(
+        &src.display().to_string(),
+        &dst.display().to_string(),
+        group,
+        false,
+        &RcloneOptions::default(),
+    );
+    let submit = capture_env(
+        "rclone",
+        rcd.rc_args_json("sync/copy", &payload),
+        rcd.rc_env(),
+    );
+    let jobid = submit
+        .recv_blocking()
+        .unwrap()
+        .ok()
+        .and_then(|out| rc::parse_jobid(&out))
+        .expect("async submit returns a jobid");
+
+    // Poll job/status until it finishes.
+    let mut done = None;
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(150));
+        let rx = capture_env(
+            "rclone",
+            rcd.rc_args_json("job/status", &format!("{{\"jobid\":{jobid}}}")),
+            rcd.rc_env(),
+        );
+        if let Ok(Ok(out)) = rx.recv_blocking() {
+            if let Some(st) = rc::parse_job_status(&out) {
+                if st.finished {
+                    done = Some(st);
+                    break;
+                }
+            }
+        }
+    }
+    let status = done.expect("RC job should finish");
+    assert!(status.success, "RC transfer failed: {}", status.error);
+
+    // core/stats for the group reflects the completed transfer.
+    let rx = capture_env(
+        "rclone",
+        rcd.rc_args_json("core/stats", &format!("{{\"group\":\"{group}\"}}")),
+        rcd.rc_env(),
+    );
+    let stats = rx
+        .recv_blocking()
+        .unwrap()
+        .ok()
+        .and_then(|o| rc::parse_core_stats(&o))
+        .expect("core/stats parses");
+    assert_eq!(stats.transfers_total, 2, "two files were scheduled");
+    assert!(stats.bytes >= 400_000, "all bytes accounted for: {stats:?}");
+
+    rcd.stop();
+
+    // The files really arrived.
+    assert!(dst.join("a.bin").exists() && dst.join("b.bin").exists());
+}
+
+#[test]
 fn missing_binary_reports_failure_not_hang() {
     let handle = spawn_with_parser("definitely-not-a-tool-xyz", vec!["x".into()], None);
     let mut saw_error = false;

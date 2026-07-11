@@ -58,6 +58,19 @@ impl Rcd {
         ]
     }
 
+    /// argv for `rclone rc <method> --json <payload>` against this daemon, for
+    /// RC calls that take a JSON body (e.g. `sync/copy`, `core/stats`). The
+    /// payload carries only paths/flags — never a secret — so argv is fine.
+    pub fn rc_args_json(&self, method: &str, json: &str) -> Vec<String> {
+        vec![
+            "rc".to_string(),
+            format!("--rc-addr={}", self.addr),
+            method.to_string(),
+            "--json".to_string(),
+            json.to_string(),
+        ]
+    }
+
     /// Environment carrying the RC credentials, for use with `capture_env`.
     pub fn rc_env(&self) -> Vec<(String, String)> {
         vec![
