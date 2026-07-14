@@ -278,8 +278,8 @@ msgstr "Prima rulare bisync — stabilește baza de referință (--resync)"
 msgid "Re-run"
 msgstr "Rulează din nou"
 
-msgid "⚠ These parameters include a credential. It is passed to rclone on the command line, which other users of this computer could briefly see in the process list. On a shared machine, prefer an OAuth provider or run “rclone config” in a terminal."
-msgstr "⚠ Acești parametri includ o parolă. Ea este transmisă către rclone pe linia de comandă, unde alți utilizatori ai acestui calculator o pot vedea pentru scurt timp în lista de procese. Pe un calculator partajat, preferă un furnizor OAuth sau rulează „rclone config” într-un terminal."
+msgid "⚠ Credential parameters cannot be submitted here because rclone would expose them in the process list. Use an OAuth provider or run “rclone config” in a terminal, then refresh Remotes."
+msgstr "⚠ Parametrii care conțin date de autentificare nu pot fi trimiși aici, deoarece rclone i-ar expune în lista de procese. Folosește un furnizor OAuth sau rulează „rclone config” într-un terminal, apoi reîmprospătează lista Remote."
 
 msgid "Download this file"
 msgstr "Descarcă acest fișier"

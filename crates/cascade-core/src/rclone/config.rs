@@ -45,31 +45,37 @@ pub fn providers() -> Vec<Provider> {
             label: crate::n("Amazon S3"),
             rtype: "s3",
             oauth: false,
-            hint: crate::n("Params: provider, access_key_id, secret_access_key, region"),
+            hint: crate::n(
+                "Non-secret params: provider, env_auth, region. Configure inline keys with rclone config in a terminal.",
+            ),
         },
         Provider {
             label: crate::n("Backblaze B2"),
             rtype: "b2",
             oauth: false,
-            hint: crate::n("Params: account, key"),
+            hint: crate::n("Credential setup requires rclone config in a terminal."),
         },
         Provider {
             label: crate::n("SFTP (SSH)"),
             rtype: "sftp",
             oauth: false,
-            hint: crate::n("Params: host, user, and pass or key_file"),
+            hint: crate::n(
+                "Non-secret params: host, user, key_file. Configure passwords in a terminal.",
+            ),
         },
         Provider {
             label: crate::n("WebDAV"),
             rtype: "webdav",
             oauth: false,
-            hint: crate::n("Params: url, vendor, user, pass"),
+            hint: crate::n(
+                "Non-secret params: url, vendor, user. Configure passwords in a terminal.",
+            ),
         },
         Provider {
             label: crate::n("FTP"),
             rtype: "ftp",
             oauth: false,
-            hint: crate::n("Params: host, user, pass"),
+            hint: crate::n("Non-secret params: host, user. Configure passwords in a terminal."),
         },
         Provider {
             label: crate::n("Local disk"),
@@ -113,6 +119,12 @@ pub fn config_create_args(
     if rtype.trim().is_empty() {
         return Err(CoreError::InvalidCommand("provider type is empty".into()));
     }
+    if params_contain_secret(params) {
+        return Err(CoreError::InvalidCommand(
+            "credential-bearing remote parameters are blocked because rclone config create would expose them in the process list; use OAuth or run rclone config in a terminal"
+                .into(),
+        ));
+    }
     let mut args = vec![
         "config".to_string(),
         "create".to_string(),
@@ -151,14 +163,22 @@ pub fn config_delete_args(name: &str) -> Result<Vec<String>> {
 
 /// Whether a parameter set carries a credential (password/secret/token/key).
 ///
-/// Used by the GUI to warn that `rclone config create` receives parameters on
-/// its **argv**, which is world-readable via `/proc/<pid>/cmdline` for the
-/// brief duration of the call. Conservative by design: a false positive shows
-/// a harmless warning; a false negative hides a real exposure.
+/// Used by the core boundary and GUI to reject credentials before
+/// `rclone config create` can place them in its process argv.
 pub fn params_contain_secret(params: &[(String, String)]) -> bool {
-    params.iter().any(|(k, _)| {
-        let k = k.to_ascii_lowercase();
-        k.contains("pass") || k.contains("secret") || k.contains("token") || k.contains("key")
+    params.iter().any(|(key, value)| {
+        let key = key.to_ascii_lowercase().replace('-', "_");
+        let secret_key = key.contains("pass")
+            || key.contains("secret")
+            || key.contains("token")
+            || key.contains("credential")
+            || key.contains("access_key")
+            || key.contains("api_key")
+            || key.contains("private_key")
+            || key.contains("key_pem")
+            || key == "key"
+            || key.ends_with("_key");
+        secret_key || crate::security::sanitize::contains_secret(&format!("{key}={value}"))
     })
 }
 
@@ -285,6 +305,20 @@ mod tests {
     }
 
     #[test]
+    fn create_args_refuse_credentials_at_the_process_boundary() {
+        for params in [
+            vec![("pass".into(), "hunter2".into())],
+            vec![("secret_access_key".into(), "aws-secret".into())],
+            vec![(
+                "url".into(),
+                "https://alice:password@example.com/data".into(),
+            )],
+        ] {
+            assert!(config_create_args("box", "s3", &params).is_err());
+        }
+    }
+
+    #[test]
     fn create_args_without_params_still_obscure() {
         let args = config_create_args("box", "local", &[]).unwrap();
         assert_eq!(
@@ -304,14 +338,20 @@ mod tests {
             "client_secret",
             "token",
             "key",
-            "key_file", // conservative: warns even for a key *path*
+            "key_pem",
             "PASSWORD", // case-insensitive
         ] {
             assert!(params_contain_secret(&mk(k)), "{k} should warn");
         }
-        for k in ["host", "user", "region", "url", "vendor", "provider"] {
+        for k in [
+            "host", "user", "region", "url", "vendor", "provider", "key_file",
+        ] {
             assert!(!params_contain_secret(&mk(k)), "{k} should not warn");
         }
+        assert!(params_contain_secret(&[(
+            "url".into(),
+            "https://alice:password@example.com".into()
+        )]));
         assert!(!params_contain_secret(&[]));
     }
 

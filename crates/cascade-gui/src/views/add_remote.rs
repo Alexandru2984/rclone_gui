@@ -54,15 +54,14 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
         .css_classes(vec!["dim-label".to_string()])
         .build();
 
-    // Shown when the typed parameters carry a credential: rclone receives them
-    // on its argv, which is briefly world-readable in /proc/<pid>/cmdline.
+    // Credential-bearing parameters are blocked before argv construction.
     let secret_warning = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
         .visible(false)
         .css_classes(vec!["warning".to_string(), "caption".to_string()])
         .label(crate::i18n::tr(
-            "⚠ These parameters include a credential. It is passed to rclone on the command line, which other users of this computer could briefly see in the process list. On a shared machine, prefer an OAuth provider or run “rclone config” in a terminal.",
+            "⚠ Credential parameters cannot be submitted here because rclone would expose them in the process list. Use an OAuth provider or run “rclone config” in a terminal, then refresh Remotes.",
         ))
         .build();
     {
