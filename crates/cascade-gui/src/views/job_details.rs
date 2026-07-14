@@ -185,8 +185,12 @@ fn detail_row(title: &str, value: &str) -> adw::ActionRow {
 
 fn load_log(ctx: &Rc<AppCtx>, run_id: i64) -> Vec<String> {
     match ctx.store.run_log_path(run_id) {
-        Ok(Some(path)) => match std::fs::read_to_string(&path) {
-            Ok(text) => text.lines().map(|s| s.to_string()).collect(),
+        Ok(Some(path)) => match cascade_core::logs::read_log_tail(
+            std::path::Path::new(&path),
+            2 * 1024 * 1024,
+            5000,
+        ) {
+            Ok(lines) => lines,
             Err(_) => vec![format!("(log file is missing: {path})")],
         },
         _ => vec!["(no log recorded for this run)".to_string()],

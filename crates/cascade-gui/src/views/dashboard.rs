@@ -1,6 +1,7 @@
 //! Dashboard: tool detection + a controllable local rclone RC daemon.
 
 use std::cell::RefCell;
+use std::io::Read;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -177,7 +178,7 @@ fn list_cascade_timers() -> Vec<(String, String)> {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with("cascade-") && name.ends_with(".timer") {
-                let on_cal = std::fs::read_to_string(entry.path())
+                let on_cal = read_small_regular_file(&entry.path(), 64 * 1024)
                     .ok()
                     .and_then(|c| cascade_core::schedule::parse_on_calendar(&c))
                     .unwrap_or_else(|| "?".into());
@@ -187,6 +188,28 @@ fn list_cascade_timers() -> Vec<(String, String)> {
     }
     out.sort();
     out
+}
+
+fn read_small_regular_file(path: &std::path::Path, max_bytes: usize) -> std::io::Result<String> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a regular file",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len().min(max_bytes as u64) as usize);
+    std::fs::File::open(path)?
+        .take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file exceeds safety limit",
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 /// Disable + remove a timer (and its service), then refresh the list.

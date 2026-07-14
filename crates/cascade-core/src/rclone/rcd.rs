@@ -8,7 +8,7 @@
 
 use std::io::Read;
 
-use crate::process::{spawn_env, RunHandle};
+use crate::process::{spawn_env_quiet, RunHandle};
 
 /// First rclone release containing the RC authorization fixes for
 /// CVE-2026-41176 and CVE-2026-41179.
@@ -64,7 +64,7 @@ impl Rcd {
             ("RCLONE_RC_USER".to_string(), user.clone()),
             ("RCLONE_RC_PASS".to_string(), pass.clone()),
         ];
-        let handle = spawn_env("rclone", args, envs, None);
+        let handle = spawn_env_quiet("rclone", args, envs);
         Ok(Self {
             addr,
             user,
@@ -109,8 +109,14 @@ impl Rcd {
         ]
     }
 
-    /// Stop the daemon (SIGKILL via the process runner).
+    /// Stop the daemon and its process group via the process runner.
     pub fn stop(&self) {
+        self.handle.cancel();
+    }
+}
+
+impl Drop for Rcd {
+    fn drop(&mut self) {
         self.handle.cancel();
     }
 }
@@ -172,6 +178,7 @@ fn random_hex(n: usize) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::spawn_env;
 
     #[test]
     fn rc_args_have_no_credentials_and_env_carries_them() {
@@ -233,5 +240,38 @@ mod tests {
         for safe_version in ["rclone v1.73.5", "rclone v1.74.4", "rclone v2.0.0"] {
             assert!(version_is_safe(safe_version), "{safe_version}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_rcd_cancels_its_process() {
+        use crate::process::ProcessEvent;
+
+        let handle = spawn_env("sleep", vec!["30".into()], Vec::new(), None);
+        let events = handle.events.clone();
+        loop {
+            match events.recv().await {
+                Ok(ProcessEvent::Started { .. }) => break,
+                Ok(_) => {}
+                Err(_) => panic!("process channel closed before start"),
+            }
+        }
+        let rcd = Rcd {
+            addr: "127.0.0.1:1".into(),
+            user: "u".into(),
+            pass: "p".into(),
+            handle,
+        };
+        drop(rcd);
+
+        let finished = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while let Ok(event) = events.recv().await {
+                if let ProcessEvent::Finished { success, .. } = event {
+                    return Some(success);
+                }
+            }
+            None
+        })
+        .await;
+        assert!(matches!(finished, Ok(Some(false))));
     }
 }

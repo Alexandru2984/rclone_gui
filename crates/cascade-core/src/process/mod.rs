@@ -14,6 +14,7 @@ pub mod progress;
 
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -23,6 +24,15 @@ use tokio::runtime::Runtime;
 /// maliciously long filename) is truncated at this length instead of being
 /// buffered without bound — protects against OOM (a denial of service).
 const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// Bound queued output per process. With the maximum line size this caps the
+/// worst-case event payload backlog at roughly 8 MiB per process.
+const EVENT_BUFFER_CAPACITY: usize = 128;
+
+/// One-shot structured commands (lsjson, listremotes, RC calls) may return a
+/// sizable response, but never get unlimited memory.
+const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Shared multi-threaded Tokio runtime that drives every child process, created
 /// lazily on first use. One runtime for the whole app instead of spinning up a
@@ -103,7 +113,7 @@ pub fn spawn_env(
     parser: Option<LineParser>,
 ) -> RunHandle {
     let binary = binary.into();
-    let (ev_tx, ev_rx) = async_channel::unbounded::<ProcessEvent>();
+    let (ev_tx, ev_rx) = async_channel::bounded::<ProcessEvent>(EVENT_BUFFER_CAPACITY);
     let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
 
     runtime().spawn(drive(binary, args, envs, ev_tx, cancel_rx, parser));
@@ -112,6 +122,21 @@ pub fn spawn_env(
         events: ev_rx,
         cancel: cancel_tx,
     }
+}
+
+/// Spawn a managed process whose output is intentionally discarded while a
+/// [`RunHandle`] is retained for cancellation. A background drain prevents a
+/// long-lived daemon from filling the bounded event queue and blocking its
+/// stdout/stderr pipes.
+pub(crate) fn spawn_env_quiet(
+    binary: impl Into<String>,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+) -> RunHandle {
+    let handle = spawn_env(binary, args, envs, None);
+    let events = handle.events.clone();
+    runtime().spawn(async move { while events.recv().await.is_ok() {} });
+    handle
 }
 
 /// Run `binary args` to completion off the calling thread and return its
@@ -131,39 +156,126 @@ pub fn capture_env(
     args: Vec<String>,
     envs: Vec<(String, String)>,
 ) -> async_channel::Receiver<std::result::Result<String, String>> {
+    capture_env_with_limits(binary, args, envs, MAX_CAPTURE_BYTES, CAPTURE_TIMEOUT)
+}
+
+fn capture_env_with_limits(
+    binary: impl Into<String>,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+    max_bytes: usize,
+    timeout: Duration,
+) -> async_channel::Receiver<std::result::Result<String, String>> {
     let binary = binary.into();
     let (tx, rx) = async_channel::bounded(1);
     runtime().spawn(async move {
-        let result = Command::new(&binary)
-            .args(&args)
-            .envs(envs)
-            .stdin(Stdio::null())
-            .output()
-            .await;
-        let msg = match result {
-            Ok(out) if out.status.success() => {
-                // Defense in depth: redact secrets on the success path too, so a
-                // caller can never leak credentials by capturing a secret-bearing
-                // command's stdout. Redaction replaces values in place, so valid
-                // JSON stays valid and structured callers (lsjson, core/version)
-                // still parse.
-                Ok(sanitize::redact(&String::from_utf8_lossy(&out.stdout)))
-            }
-            Ok(out) => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(sanitize::redact(&format!(
-                    "{binary} failed: {}",
-                    err.trim()
-                )))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(format!(
-                "'{binary}' not found — is it installed and on PATH?"
-            )),
-            Err(e) => Err(format!("failed to run '{binary}': {e}")),
-        };
+        let msg = drive_capture(binary, args, envs, max_bytes, timeout).await;
         let _ = tx.send(msg).await;
     });
     rx
+}
+
+#[derive(Debug)]
+struct CappedOutput {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+async fn drive_capture(
+    binary: String,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+    max_bytes: usize,
+    timeout: Duration,
+) -> std::result::Result<String, String> {
+    let mut command = Command::new(&binary);
+    command
+        .args(&args)
+        .envs(envs)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    harden_command(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "'{binary}' not found — is it installed and on PATH?"
+            ));
+        }
+        Err(error) => return Err(format!("failed to run '{binary}': {error}")),
+    };
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let completion = tokio::time::timeout(timeout, async {
+        let (status, stdout, stderr) = tokio::join!(
+            child.wait(),
+            read_capped(stdout, max_bytes),
+            read_capped(stderr, max_bytes)
+        );
+        (status, stdout, stderr)
+    })
+    .await;
+
+    let (status, stdout, stderr) = match completion {
+        Ok(result) => result,
+        Err(_) => {
+            force_kill(&mut child);
+            let _ = child.wait().await;
+            return Err(format!(
+                "'{binary}' timed out after {} seconds",
+                timeout.as_secs_f64()
+            ));
+        }
+    };
+    let status = status.map_err(|error| format!("failed waiting for '{binary}': {error}"))?;
+    let stdout = stdout.map_err(|error| format!("failed reading '{binary}' stdout: {error}"))?;
+    let stderr = stderr.map_err(|error| format!("failed reading '{binary}' stderr: {error}"))?;
+    if stdout.exceeded || stderr.exceeded {
+        return Err(format!(
+            "'{binary}' output exceeded the {max_bytes}-byte safety limit"
+        ));
+    }
+
+    if status.success() {
+        // Defense in depth: captured structured output is redacted before it
+        // can leave this module. Whole-buffer redaction also handles PEM blocks.
+        Ok(sanitize::redact(&String::from_utf8_lossy(&stdout.bytes)))
+    } else {
+        let error = String::from_utf8_lossy(&stderr.bytes);
+        Err(sanitize::redact(&format!(
+            "{binary} failed: {}",
+            error.trim()
+        )))
+    }
+}
+
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    max_bytes: usize,
+) -> std::io::Result<CappedOutput> {
+    let mut bytes = Vec::with_capacity(max_bytes.min(8192));
+    let mut exceeded = false;
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let count = reader.read(&mut chunk).await?;
+        if count == 0 {
+            break;
+        }
+        let remaining = max_bytes.saturating_sub(bytes.len());
+        let keep = remaining.min(count);
+        bytes.extend_from_slice(&chunk[..keep]);
+        exceeded |= keep < count;
+        // Continue draining after the cap so the child cannot deadlock on a
+        // full pipe while it exits. Excess bytes are discarded.
+    }
+    Ok(CappedOutput { bytes, exceeded })
+}
+
+fn harden_command(command: &mut Command) {
+    command.kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
 }
 
 async fn drive(
@@ -174,14 +286,15 @@ async fn drive(
     cancel_rx: async_channel::Receiver<()>,
     parser: Option<LineParser>,
 ) {
-    let mut child = match Command::new(&binary)
+    let mut command = Command::new(&binary);
+    command
         .args(&args)
         .envs(envs)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    harden_command(&mut command);
+    let mut child = match command.spawn() {
         Ok(c) => c,
         Err(e) => {
             let msg = if e.kind() == std::io::ErrorKind::NotFound {
@@ -221,17 +334,29 @@ async fn drive(
         tokio::select! {
             status = child.wait() => status.map_err(|e| e.to_string()),
             _ = explicit_cancel => {
-                let _ = ev.send(ProcessEvent::Error("cancelled by user".into())).await;
+                let _ = ev.try_send(ProcessEvent::Error("cancelled by user".into()));
                 graceful_terminate(&mut child).await
             }
         }
     };
 
     // Drive readers and the wait concurrently on this single thread.
-    let (_, _, result) = tokio::join!(read_stdout, read_stderr, wait_or_cancel);
+    let (stdout_result, stderr_result, result) =
+        tokio::join!(read_stdout, read_stderr, wait_or_cancel);
 
-    match result {
-        Ok(status) => {
+    let output_error = stdout_result.err().or_else(|| stderr_result.err());
+
+    match (result, output_error) {
+        (_, Some(error)) => {
+            let _ = ev.send(ProcessEvent::Error(error)).await;
+            let _ = ev
+                .send(ProcessEvent::Finished {
+                    success: false,
+                    code: None,
+                })
+                .await;
+        }
+        (Ok(status), None) => {
             let _ = ev
                 .send(ProcessEvent::Finished {
                     success: status.success(),
@@ -239,7 +364,7 @@ async fn drive(
                 })
                 .await;
         }
-        Err(e) => {
+        (Err(e), None) => {
             let _ = ev.send(ProcessEvent::Error(e)).await;
             let _ = ev
                 .send(ProcessEvent::Finished {
@@ -259,7 +384,7 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
     ev: async_channel::Sender<ProcessEvent>,
     parser: Option<LineParser>,
     is_stderr: bool,
-) {
+) -> std::result::Result<(), String> {
     let mut chunk = [0u8; 8192];
     let mut line: Vec<u8> = Vec::with_capacity(256);
     let mut truncated = false;
@@ -267,8 +392,12 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
 
     loop {
         let n = match reader.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(n) => n,
+            Err(error) => {
+                let stream = if is_stderr { "stderr" } else { "stdout" };
+                return Err(format!("failed reading child {stream}: {error}"));
+            }
         };
         for &b in &chunk[..n] {
             if b == b'\n' {
@@ -299,6 +428,7 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
         )
         .await;
     }
+    Ok(())
 }
 
 /// Sanitize, parse, and emit one accumulated line, then reset the buffer.
@@ -331,7 +461,7 @@ async fn emit_line(
 ) {
     if let Some(p) = parser {
         if let Some(progress) = p(&line) {
-            let _ = ev.send(ProcessEvent::Progress(progress)).await;
+            let _ = ev.try_send(ProcessEvent::Progress(progress));
             return;
         }
     }
@@ -349,18 +479,43 @@ async fn emit_line(
 async fn graceful_terminate(
     child: &mut tokio::process::Child,
 ) -> std::result::Result<std::process::ExitStatus, String> {
+    let pid = child.id();
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        // SAFETY: `pid` is our own child; sending SIGTERM is always sound.
+    if let Some(pid) = pid {
+        // SAFETY: the child was placed in its own process group at spawn.
         unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
         }
     }
+    #[cfg(not(unix))]
+    let _ = child.start_kill();
+
     match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
-        Ok(status) => status.map_err(|e| e.to_string()),
+        Ok(status) => {
+            #[cfg(unix)]
+            kill_process_group(pid, libc::SIGKILL);
+            status.map_err(|e| e.to_string())
+        }
         Err(_) => {
-            let _ = child.start_kill();
+            force_kill(child);
             child.wait().await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+fn force_kill(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    kill_process_group(child.id(), libc::SIGKILL);
+    let _ = child.start_kill();
+}
+
+#[cfg(unix)]
+fn kill_process_group(pid: Option<u32>, signal: libc::c_int) {
+    if let Some(pid) = pid {
+        // SAFETY: the child was placed in a dedicated process group whose id
+        // equals its pid. ESRCH is harmless if the whole group already exited.
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), signal);
         }
     }
 }
@@ -368,6 +523,13 @@ async fn graceful_terminate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn event_queue_is_bounded() {
+        let handle = spawn("true", vec![]);
+        assert_eq!(handle.events.capacity(), Some(EVENT_BUFFER_CAPACITY));
+        finish(&handle).await;
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn cancel_terminates_a_running_process() {
@@ -574,6 +736,81 @@ mod tests {
             vec![("CASCADE_CAP_VAR".into(), "cap-value".into())],
         );
         assert_eq!(rx.recv().await.unwrap().unwrap().trim(), "cap-value");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_refuses_output_over_its_byte_limit() {
+        let rx = capture_env_with_limits(
+            "head",
+            vec!["-c".into(), "4096".into(), "/dev/zero".into()],
+            Vec::new(),
+            1024,
+            Duration::from_secs(2),
+        );
+        let error = rx.recv().await.unwrap().unwrap_err();
+        assert!(error.contains("1024-byte safety limit"), "{error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn capture_times_out_and_terminates_the_child() {
+        let started = std::time::Instant::now();
+        let rx = capture_env_with_limits(
+            "sleep",
+            vec!["30".into()],
+            Vec::new(),
+            1024,
+            Duration::from_millis(50),
+        );
+        let error = rx.recv().await.unwrap().unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn captured_multiline_private_key_is_fully_redacted() {
+        let rx = capture(
+            "printf",
+            vec![
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nCAPTURED-SECRET-BODY\n-----END OPENSSH PRIVATE KEY-----\n"
+                    .into(),
+            ],
+        );
+        let output = rx.recv().await.unwrap().unwrap();
+        assert!(!output.contains("CAPTURED-SECRET-BODY"));
+        assert!(!output.contains("PRIVATE KEY"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancellation_terminates_descendant_processes() {
+        let handle = spawn(
+            "sh",
+            vec![
+                "-c".into(),
+                "sleep 30 & child=$!; echo CHILD:$child; wait".into(),
+            ],
+        );
+        let child_pid = loop {
+            match handle.events.recv().await {
+                Ok(ProcessEvent::Stdout(line)) if line.starts_with("CHILD:") => {
+                    break line[6..].parse::<libc::pid_t>().unwrap();
+                }
+                Ok(_) => {}
+                Err(_) => panic!("channel closed before descendant pid"),
+            }
+        };
+        handle.cancel();
+        let _ = finish(&handle).await;
+
+        for _ in 0..40 {
+            // SAFETY: signal 0 only probes whether the pid still exists.
+            let exists = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !exists {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("descendant process {child_pid} survived cancellation");
     }
 
     #[tokio::test(flavor = "multi_thread")]

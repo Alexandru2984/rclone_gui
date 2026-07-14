@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::storage::Store;
 
 const KEY: &str = "app_settings";
+pub const MAX_PARALLEL_JOBS: u32 = 8;
 
 /// Color scheme preference (maps to libadwaita's color scheme in the GUI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -40,17 +41,21 @@ impl Default for AppSettings {
 impl AppSettings {
     /// Load settings from the store, falling back to defaults on absence/parse error.
     pub fn load(store: &Store) -> Self {
-        store
+        let mut settings: Self = store
             .get_setting(KEY)
             .ok()
             .flatten()
             .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        settings.max_parallel = settings.max_parallel.clamp(1, MAX_PARALLEL_JOBS);
+        settings
     }
 
     /// Persist the settings as JSON.
     pub fn save(&self, store: &Store) -> Result<()> {
-        let json = serde_json::to_string(self)?;
+        let mut safe = self.clone();
+        safe.max_parallel = safe.max_parallel.clamp(1, MAX_PARALLEL_JOBS);
+        let json = serde_json::to_string(&safe)?;
         store.set_setting(KEY, &json)
     }
 }
@@ -81,5 +86,24 @@ mod tests {
         assert_eq!(back.theme, Theme::Dark);
         assert_eq!(back.max_parallel, 4);
         assert!(!back.confirm_destructive);
+    }
+
+    #[test]
+    fn persisted_parallelism_is_clamped() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .set_setting(
+                KEY,
+                r#"{"theme":"system","max_parallel":4294967295,"confirm_destructive":true}"#,
+            )
+            .unwrap();
+        assert_eq!(AppSettings::load(&store).max_parallel, MAX_PARALLEL_JOBS);
+
+        let settings = AppSettings {
+            max_parallel: 0,
+            ..Default::default()
+        };
+        settings.save(&store).unwrap();
+        assert_eq!(AppSettings::load(&store).max_parallel, 1);
     }
 }

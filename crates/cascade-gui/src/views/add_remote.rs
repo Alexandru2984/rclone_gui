@@ -8,6 +8,20 @@ use adw::prelude::*;
 use cascade_core::process::{spawn, ProcessEvent};
 use cascade_core::rclone::config;
 
+const MAX_REMOTE_LOG_CHARS: i32 = 1024 * 1024;
+
+fn append_bounded(buf: &gtk::TextBuffer, line: &str) {
+    let mut end = buf.end_iter();
+    buf.insert(&mut end, line);
+    buf.insert(&mut end, "\n");
+    let chars = buf.char_count();
+    if chars > MAX_REMOTE_LOG_CHARS {
+        let mut start = buf.start_iter();
+        let mut cut = buf.iter_at_offset(chars - MAX_REMOTE_LOG_CHARS);
+        buf.delete(&mut start, &mut cut);
+    }
+}
+
 /// Present the dialog. `on_done` is called after a remote is created so the
 /// caller can refresh its list of remotes.
 pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
@@ -120,12 +134,6 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
     create.connect_clicked(move |btn| {
         let log = log_buffer.clone();
         log.set_text("");
-        let append = move |buf: &gtk::TextBuffer, line: &str| {
-            let mut end = buf.end_iter();
-            buf.insert(&mut end, line);
-            buf.insert(&mut end, "\n");
-        };
-
         let remote_name = name.text().to_string();
         let providers = config::providers();
         let Some(p) = providers.get(provider.selected() as usize).copied() else {
@@ -134,21 +142,21 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
         let pairs = match config::parse_params(&params.text()) {
             Ok(p) => p,
             Err(e) => {
-                append(&log, &format!("✗ {e}"));
+                append_bounded(&log, &format!("✗ {e}"));
                 return;
             }
         };
         let argv = match config::config_create_args(&remote_name, p.rtype, &pairs) {
             Ok(a) => a,
             Err(e) => {
-                append(&log, &format!("✗ {e}"));
+                append_bounded(&log, &format!("✗ {e}"));
                 return;
             }
         };
 
-        append(&log, &format!("Creating “{remote_name}” ({})…", p.rtype));
+        append_bounded(&log, &format!("Creating “{remote_name}” ({})…", p.rtype));
         if p.oauth {
-            append(
+            append_bounded(
                 &log,
                 "A browser window will open for sign-in. Complete it, then return here.",
             );
@@ -164,8 +172,8 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
             let mut ok = false;
             while let Ok(ev) = events.recv().await {
                 match ev {
-                    ProcessEvent::Stdout(l) | ProcessEvent::Stderr(l) => append(&log, &l),
-                    ProcessEvent::Error(e) => append(&log, &format!("[error] {e}")),
+                    ProcessEvent::Stdout(l) | ProcessEvent::Stderr(l) => append_bounded(&log, &l),
+                    ProcessEvent::Error(e) => append_bounded(&log, &format!("[error] {e}")),
                     ProcessEvent::Finished { success, .. } => {
                         ok = success;
                         break;
@@ -174,10 +182,10 @@ pub fn present(parent: &adw::ApplicationWindow, on_done: Rc<dyn Fn()>) {
                 }
             }
             if ok {
-                append(&log, "✓ Remote created.");
+                append_bounded(&log, "✓ Remote created.");
                 on_done();
             } else {
-                append(&log, "✗ Could not create the remote (see output above).");
+                append_bounded(&log, "✗ Could not create the remote (see output above).");
             }
             btn.set_sensitive(true);
         });

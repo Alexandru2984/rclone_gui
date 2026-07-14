@@ -5,7 +5,7 @@
 //! file with private (0600) permissions.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -44,6 +44,52 @@ pub fn prune_logs_older_than_days(dir: &Path, days: u64) -> std::io::Result<usiz
         .checked_sub(Duration::from_secs(days.saturating_mul(86_400)))
         .unwrap_or(SystemTime::UNIX_EPOCH);
     prune_logs(dir, cutoff)
+}
+
+/// Read only the newest bounded portion of a regular log file.
+///
+/// This is intended for history/details views: a very large or replaced log
+/// can never force the UI to allocate the whole file. Symlinks are refused.
+pub fn read_log_tail(
+    path: &Path,
+    max_bytes: usize,
+    max_lines: usize,
+) -> std::io::Result<Vec<String>> {
+    if max_bytes == 0 || max_lines == 0 {
+        return Ok(Vec::new());
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "log path must be a regular file, not a symlink",
+        ));
+    }
+    let mut file = File::open(path)?;
+    let start = metadata.len().saturating_sub(max_bytes as u64);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::with_capacity((metadata.len() - start) as usize);
+    file.take(max_bytes as u64).read_to_end(&mut bytes)?;
+
+    let mut omitted = start > 0;
+    if start > 0 {
+        if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
+            bytes.drain(..=newline);
+        } else {
+            bytes.clear();
+        }
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if lines.len() > max_lines {
+        let drop_count = lines.len() - max_lines;
+        lines.drain(..drop_count);
+        omitted = true;
+    }
+    if omitted {
+        lines.insert(0, "… older log output omitted …".to_string());
+    }
+    Ok(lines)
 }
 
 /// Re-sanitize historical log files created by older Cascade versions.
@@ -401,5 +447,34 @@ mod tests {
         symlink(&target, dir.path().join("run-12.log")).unwrap();
         assert!(LogWriter::create(dir.path(), 12).is_err());
         assert_eq!(std::fs::read_to_string(target).unwrap(), "do not touch");
+    }
+
+    #[test]
+    fn log_tail_is_bounded_by_bytes_and_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-20.log");
+        let content = (0..100)
+            .map(|index| format!("line-{index:03}-xxxxxxxxxxxxxxxx\n"))
+            .collect::<String>();
+        std::fs::write(&path, content).unwrap();
+
+        let lines = read_log_tail(&path, 400, 5).unwrap();
+        assert_eq!(lines.len(), 6);
+        assert!(lines[0].contains("omitted"));
+        assert!(lines[1].starts_with("line-095"));
+        assert!(lines[5].starts_with("line-099"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn log_tail_refuses_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.log");
+        let link = dir.path().join("linked.log");
+        std::fs::write(&target, "large/untrusted").unwrap();
+        symlink(target, &link).unwrap();
+        assert!(read_log_tail(&link, 1024, 10).is_err());
     }
 }

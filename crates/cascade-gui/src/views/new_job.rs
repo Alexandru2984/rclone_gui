@@ -27,6 +27,7 @@ use crate::ctx::AppCtx;
 
 /// Cap on live-log scrollback lines kept in the New Job text view.
 const MAX_LOG_LINES: i32 = 5000;
+const MAX_LOG_CHARS: i32 = 2 * 1024 * 1024;
 
 /// Owns the screen's widgets and behavior. Shared as `Rc<Inputs>` so signal
 /// handlers can call back into it.
@@ -1266,8 +1267,14 @@ impl Inputs {
         buf.insert(&mut end, text);
         buf.insert(&mut end, "\n");
 
-        // Bound the scrollback so a very chatty run can't grow the buffer without
-        // limit; drop the oldest lines once we exceed the cap.
+        // Bound both lines and characters: a few maximum-size lines must not
+        // turn the GTK buffer into hundreds of MiB.
+        let chars = buf.char_count();
+        if chars > MAX_LOG_CHARS {
+            let mut start = buf.start_iter();
+            let mut cut = buf.iter_at_offset(chars - MAX_LOG_CHARS);
+            buf.delete(&mut start, &mut cut);
+        }
         let lines = buf.line_count();
         if lines > MAX_LOG_LINES {
             let mut start = buf.start_iter();

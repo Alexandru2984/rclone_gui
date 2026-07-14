@@ -70,7 +70,7 @@ pub fn build(ctx: Rc<AppCtx>) -> gtk::Widget {
         .adjustment(&gtk::Adjustment::new(
             ctx.settings.borrow().max_parallel as f64,
             1.0,
-            8.0,
+            cascade_core::settings::MAX_PARALLEL_JOBS as f64,
             1.0,
             1.0,
             0.0,
