@@ -14,9 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 regex = "1"
-directories = "5"
-rusqlite = { version = "0.32", features = ["bundled"] }
-shlex = "1"
+directories = "6"
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+shlex = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "sync", "macros", "time"] }
 
 [target.'cfg(unix)'.dependencies]

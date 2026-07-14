@@ -13,7 +13,7 @@ name = "cascade"
 path = "src/main.rs"
 
 [dependencies]
-cascade-core = { path = "../cascade-core" }
+cascade-core = { path = "../cascade-core", version = "=0.1.1" }
 async-channel.workspace = true
 serde_json.workspace = true
 # gtk4-rs stack. Version features are picked once GTK4 dev libs are installed;
