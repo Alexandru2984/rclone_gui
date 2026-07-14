@@ -392,6 +392,10 @@ fn rcd_daemon_starts_answers_and_stops() {
         eprintln!("skipping: rclone not installed");
         return;
     }
+    if let Err(e) = Rcd::security_check() {
+        eprintln!("skipping insecure/unsupported rclone RC: {e}");
+        return;
+    }
 
     let rcd = Rcd::start().expect("rcd should start");
     assert!(
@@ -430,6 +434,10 @@ fn rc_driven_transfer_runs_and_reports_stats() {
 
     if !rclone_available() {
         eprintln!("skipping: rclone not installed");
+        return;
+    }
+    if let Err(e) = Rcd::security_check() {
+        eprintln!("skipping insecure/unsupported rclone RC: {e}");
         return;
     }
     let dir = tempfile::tempdir().unwrap();

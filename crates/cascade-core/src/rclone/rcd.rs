@@ -10,6 +10,10 @@ use std::io::Read;
 
 use crate::process::{spawn_env, RunHandle};
 
+/// First rclone release containing the RC authorization fixes for
+/// CVE-2026-41176 and CVE-2026-41179.
+pub const MIN_SAFE_RCLONE_VERSION: (u64, u64, u64) = (1, 73, 5);
+
 /// A running local RC daemon. Dropping or calling [`Rcd::stop`] kills it.
 pub struct Rcd {
     addr: String,
@@ -19,12 +23,38 @@ pub struct Rcd {
 }
 
 impl Rcd {
+    /// Refuse to expose an RC endpoint through an rclone version with known
+    /// pre-authentication command-execution vulnerabilities.
+    ///
+    /// This check is deliberately fail-closed: an absent or unparseable version
+    /// never starts a daemon. Callers may safely fall back to the ordinary CLI
+    /// transfer path.
+    pub fn security_check() -> std::io::Result<()> {
+        let info = super::detect::detect().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "rclone is not installed")
+        })?;
+        if version_is_safe(&info.version) {
+            return Ok(());
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "rclone RC requires version {}.{}.{} or newer; found '{}'",
+                MIN_SAFE_RCLONE_VERSION.0,
+                MIN_SAFE_RCLONE_VERSION.1,
+                MIN_SAFE_RCLONE_VERSION.2,
+                info.version
+            ),
+        ))
+    }
+
     /// Start `rclone rcd` on a free loopback port with random credentials.
     ///
     /// Credentials are passed via the environment (`RCLONE_RC_USER`/`_PASS`),
     /// never on the command line, so they are not exposed in the world-readable
     /// `/proc/<pid>/cmdline`.
     pub fn start() -> std::io::Result<Self> {
+        Self::security_check()?;
         let port = free_loopback_port()?;
         let addr = format!("127.0.0.1:{port}");
         let user = format!("cascade-{}", random_hex(4)?);
@@ -82,6 +112,37 @@ impl Rcd {
     /// Stop the daemon (SIGKILL via the process runner).
     pub fn stop(&self) {
         self.handle.cancel();
+    }
+}
+
+/// Whether an `rclone version` banner meets the minimum safe RC version.
+/// Accepts normal and distribution banners such as `rclone v1.74.4` and
+/// `rclone v1.74.4-DEV`.
+pub fn version_is_safe(banner: &str) -> bool {
+    let Some(v_pos) = banner.find('v') else {
+        return false;
+    };
+    let version_tail = &banner[v_pos + 1..];
+    let numeric: String = version_tail
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = numeric.split('.');
+    let parsed = (
+        parts.next().and_then(|p| p.parse::<u64>().ok()),
+        parts.next().and_then(|p| p.parse::<u64>().ok()),
+        parts.next().and_then(|p| p.parse::<u64>().ok()),
+    );
+    match parsed {
+        (Some(major), Some(minor), Some(patch)) => {
+            let version = (major, minor, patch);
+            version > MIN_SAFE_RCLONE_VERSION
+                || (version == MIN_SAFE_RCLONE_VERSION
+                    && version_tail.strip_prefix(&numeric).is_some_and(|suffix| {
+                        suffix.is_empty() || suffix.chars().next().is_some_and(char::is_whitespace)
+                    }))
+        }
+        _ => false,
     }
 }
 
@@ -155,5 +216,22 @@ mod tests {
         // Astronomically unlikely to be all zeros unless the CSPRNG read failed
         // silently — which this function no longer allows.
         assert_ne!(hex, "0".repeat(48));
+    }
+
+    #[test]
+    fn rc_version_gate_is_fail_closed() {
+        for unsafe_version in [
+            "rclone v1.60.1-DEV",
+            "rclone v1.69.0",
+            "rclone v1.73.4",
+            "rclone v1.73.5-beta.1",
+            "unknown",
+            "",
+        ] {
+            assert!(!version_is_safe(unsafe_version), "{unsafe_version}");
+        }
+        for safe_version in ["rclone v1.73.5", "rclone v1.74.4", "rclone v2.0.0"] {
+            assert!(version_is_safe(safe_version), "{safe_version}");
+        }
     }
 }

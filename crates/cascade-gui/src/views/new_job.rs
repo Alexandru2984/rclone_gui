@@ -918,8 +918,15 @@ impl Inputs {
         // real per-file monitor. Everything else (rsync, dry-run, bisync, custom
         // flags) stays on the CLI streaming path.
         if rc_eligible(&spec) {
-            self.run_rc(spec, run_id, preview);
-            return;
+            match Rcd::security_check() {
+                Ok(()) => {
+                    self.run_rc(spec, run_id, preview);
+                    return;
+                }
+                Err(e) => self.log_line(&format!(
+                    "[RC monitor unavailable: {e}; using the safe CLI path]"
+                )),
+            }
         }
 
         // Pick the right progress parser for the tool.

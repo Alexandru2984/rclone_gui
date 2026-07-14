@@ -52,8 +52,8 @@ modules:
       - install -Dm755 rclone /app/bin/rclone
     sources:
       - type: archive
-        url: https://downloads.rclone.org/v1.69.0/rclone-v1.69.0-linux-amd64.zip
-        sha256: 813892bb54ebc5891664b85c9cfc0e05ee50d39e3d5bb1ddd6d53d0f93a64dc2
+        url: https://downloads.rclone.org/v1.74.4/rclone-v1.74.4-linux-amd64.zip
+        sha256: fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d
         strip-components: 1
 
   # Cascade itself (offline cargo build using the vendored cargo-sources.json).
