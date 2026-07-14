@@ -58,7 +58,7 @@ proptest! {
         name in any::<String>(),
         args in proptest::collection::vec(any::<String>(), 0..6),
     ) {
-        let units = build_units(&name, "/usr/bin/rsync", &args, "daily", None);
+        let units = build_units(&name, "/usr/bin/rsync", &args, "daily", None).unwrap();
         let exec_lines = units.service.lines().filter(|l| l.starts_with("ExecStart=")).count();
         prop_assert_eq!(exec_lines, 1, "ExecStart was split or duplicated");
         // [Unit] / Description / blank / [Service] / Type=oneshot / ExecStart.

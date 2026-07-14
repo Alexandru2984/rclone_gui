@@ -172,7 +172,9 @@ fn schedules_group() -> adw::PreferencesGroup {
 
 /// List Cascade-created timers as `(filename, OnCalendar)`.
 fn list_cascade_timers() -> Vec<(String, String)> {
-    let dir = crate::views::schedule::systemd_user_dir();
+    let Ok(dir) = crate::views::schedule::systemd_user_dir() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -214,6 +216,14 @@ fn read_small_regular_file(path: &std::path::Path, max_bytes: usize) -> std::io:
 
 /// Disable + remove a timer (and its service), then refresh the list.
 fn delete_timer(timer_file: String, refresh: Option<Refresh>) {
+    if !timer_file.starts_with("cascade-")
+        || !timer_file.ends_with(".timer")
+        || !timer_file
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_.@".contains(character))
+    {
+        return;
+    }
     let rx = capture(
         "systemctl",
         vec![
@@ -224,13 +234,20 @@ fn delete_timer(timer_file: String, refresh: Option<Refresh>) {
         ],
     );
     glib::spawn_future_local(async move {
-        let _ = rx.recv().await;
-        let dir = crate::views::schedule::systemd_user_dir();
-        let _ = std::fs::remove_file(format!("{dir}/{timer_file}"));
-        let _ = std::fs::remove_file(format!(
-            "{dir}/{}",
-            timer_file.replace(".timer", ".service")
-        ));
+        if !matches!(rx.recv().await, Ok(Ok(_))) {
+            if let Some(refresh) = refresh {
+                refresh();
+            }
+            return;
+        }
+        let Ok(dir) = crate::views::schedule::systemd_user_dir() else {
+            if let Some(refresh) = refresh {
+                refresh();
+            }
+            return;
+        };
+        let _ = std::fs::remove_file(dir.join(&timer_file));
+        let _ = std::fs::remove_file(dir.join(timer_file.replace(".timer", ".service")));
         let reload = capture("systemctl", vec!["--user".into(), "daemon-reload".into()]);
         let _ = reload.recv().await;
         if let Some(refresh) = refresh {

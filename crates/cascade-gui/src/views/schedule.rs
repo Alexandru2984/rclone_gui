@@ -3,6 +3,9 @@
 //! No internal daemon — systemd runs the job. The units are written under
 //! `~/.config/systemd/user/` and enabled with `systemctl --user`.
 
+use std::path::PathBuf;
+use std::rc::Rc;
+
 use adw::prelude::*;
 
 use cascade_core::job::JobSpec;
@@ -27,6 +30,15 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
         .build();
     group.add(&when);
 
+    let dry_run = adw::SwitchRow::builder()
+        .title(crate::i18n::tr("Dry-run schedule"))
+        .subtitle(crate::i18n::tr(
+            "Safe default: report recurring changes without writing or deleting files",
+        ))
+        .active(true)
+        .build();
+    group.add(&dry_run);
+
     let hint = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
@@ -37,6 +49,22 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
         .build();
 
     let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
+
+    let path_snapshot = spec.validate_paths().unwrap_or_default();
+    let consent = gtk::CheckButton::with_label(&crate::i18n::tr(
+        "I understand that this recurring job can overwrite or delete data without another prompt",
+    ));
+    consent.set_visible(false);
+
+    let live_warning = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .css_classes(vec!["error".to_string()])
+        .label(crate::i18n::tr(
+            "⚠ Live schedules run unattended. Disable dry-run only after reviewing the exact paths and deletion limits.",
+        ))
+        .build();
 
     let create = gtk::Button::builder()
         .label(crate::i18n::tr("Create schedule"))
@@ -51,6 +79,8 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
     content.set_margin_end(16);
     content.append(&group);
     content.append(&hint);
+    content.append(&live_warning);
+    content.append(&consent);
     content.append(&create);
     content.append(&status);
 
@@ -60,77 +90,158 @@ pub fn present(parent: &adw::ApplicationWindow, spec: JobSpec) {
     toolbar.set_content(Some(&content));
     dialog.set_child(Some(&toolbar));
 
+    let refresh_gate: Rc<dyn Fn()> = {
+        let dry_run = dry_run.clone();
+        let consent = consent.clone();
+        let live_warning = live_warning.clone();
+        let create = create.clone();
+        Rc::new(move || {
+            let live = !dry_run.is_active();
+            consent.set_visible(live);
+            live_warning.set_visible(live);
+            create.set_sensitive(!live || consent.is_active());
+            if live {
+                create.add_css_class("destructive-action");
+                create.remove_css_class("suggested-action");
+            } else {
+                create.remove_css_class("destructive-action");
+                create.add_css_class("suggested-action");
+            }
+        })
+    };
+    {
+        let refresh_gate = refresh_gate.clone();
+        dry_run.connect_active_notify(move |_| refresh_gate());
+    }
+    {
+        let refresh_gate = refresh_gate.clone();
+        consent.connect_toggled(move |_| refresh_gate());
+    }
+    refresh_gate();
+
     create.connect_clicked(move |btn| {
-        // Never write a credential into a (world-readable) unit file.
-        if spec.contains_secret() {
+        let live = !dry_run.is_active();
+        if live && !consent.is_active() {
+            status.set_label(&crate::i18n::tr("✗ Explicit confirmation is required."));
+            return;
+        }
+        let mut requested = spec.clone();
+        requested.dry_run = !live;
+        let current_warnings = match requested.validate_paths() {
+            Ok(warnings) => warnings,
+            Err(error) => {
+                status.set_label(&format!("✗ {error}"));
+                return;
+            }
+        };
+        if current_warnings != path_snapshot {
             status.set_label(&crate::i18n::tr(
-                "✗ This job embeds a credential. Configure an rclone remote and reference it instead.",
+                "✗ Path safety changed while this dialog was open. Close it, review the job, and try again.",
             ));
             return;
         }
-        let bin_path = match tool_path(spec.tool) {
+        let (requested, argv) = match requested.prepare_execution() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                status.set_label(&format!("✗ {error}"));
+                return;
+            }
+        };
+        let bin_path = match tool_path(requested.tool) {
             Some(p) => p,
             None => {
                 status.set_label(&crate::i18n::tr("✗ The required tool is not installed."));
                 return;
             }
         };
-        let argv = match spec.build_argv() {
-            Ok(a) => a,
-            Err(e) => {
-                status.set_label(&format!("✗ {e}"));
+        let on_calendar = when.text().trim().to_string();
+        if let Err(error) = schedule::validate_on_calendar(&on_calendar) {
+            status.set_label(&format!("✗ {error}"));
+            return;
+        }
+
+        let dir = match systemd_user_dir() {
+            Ok(dir) => dir,
+            Err(error) => {
+                status.set_label(&format!("✗ {error}"));
                 return;
             }
         };
-        let on_calendar = when.text().trim().to_string();
-        if on_calendar.is_empty() {
-            status.set_label(&crate::i18n::tr("✗ Enter a schedule (e.g. daily)."));
-            return;
-        }
-
-        let dir = systemd_user_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            status.set_label(&format!("✗ Could not create {dir}: {e}"));
-            return;
-        }
 
         // If notify-send is available, wire an OnFailure= hook so a failed
         // scheduled run raises a desktop notification (not just a journal entry).
-        let on_failure = match rclone::detect::which("notify-send") {
+        let notify = match rclone::detect::which("notify-send")
+            .and_then(|path| std::fs::canonicalize(path).ok())
+        {
             Some(path) => {
                 let title = crate::i18n::tr("Scheduled backup failed");
-                let unit = schedule::build_notify_unit(&path.to_string_lossy(), &title);
-                let notify_path = format!("{dir}/{}", schedule::NOTIFY_UNIT_FILE);
-                if std::fs::write(&notify_path, unit).is_ok() {
-                    Some(schedule::notify_instance_for(&spec.name))
-                } else {
-                    None
-                }
+                schedule::build_notify_unit(&path.to_string_lossy(), &title).ok()
             }
             None => None,
         };
+        let on_failure = notify
+            .as_ref()
+            .map(|_| schedule::notify_instance_for(&requested.name));
 
-        let units =
-            schedule::build_units(&spec.name, &bin_path, &argv, &on_calendar, on_failure.as_deref());
-        let service_path = format!("{dir}/{}", units.service_name);
-        let timer_path = format!("{dir}/{}", units.timer_name);
-        if let Err(e) = std::fs::write(&service_path, &units.service)
-            .and_then(|_| std::fs::write(&timer_path, &units.timer))
-        {
-            status.set_label(&format!("✗ Could not write unit files: {e}"));
-            return;
-        }
+        let units = match schedule::build_units(
+            &requested.name,
+            &bin_path,
+            &argv,
+            &on_calendar,
+            on_failure.as_deref(),
+        ) {
+            Ok(units) => units,
+            Err(error) => {
+                status.set_label(&format!("✗ {error}"));
+                return;
+            }
+        };
 
-        status.set_label(&crate::i18n::tr("Enabling the timer…"));
+        status.set_label(&crate::i18n::tr("Safely installing and enabling the timer…"));
         btn.set_sensitive(false);
 
-        // daemon-reload, then enable --now the timer.
+        // Stop an existing timer before replacing either half of the pair.
         let timer_name = units.timer_name.clone();
+        let replacing = std::fs::symlink_metadata(dir.join(&timer_name)).is_ok();
         let status = status.clone();
         let btn = btn.clone();
         glib::spawn_future_local(async move {
+            if replacing {
+                let stop = capture(
+                    "systemctl",
+                    vec![
+                        "--user".into(),
+                        "disable".into(),
+                        "--now".into(),
+                        timer_name.clone(),
+                    ],
+                );
+                if !matches!(stop.recv().await, Ok(Ok(_))) {
+                    status.set_label("✗ Could not stop the existing timer; no files were replaced");
+                    btn.set_sensitive(true);
+                    return;
+                }
+            }
+
+            let mut files = vec![
+                (units.service_name.as_str(), units.service.as_str()),
+                (units.timer_name.as_str(), units.timer.as_str()),
+            ];
+            if let Some(notify) = notify.as_deref() {
+                files.push((schedule::NOTIFY_UNIT_FILE, notify));
+            }
+            if let Err(error) = schedule::write_user_units(&dir, &files) {
+                status.set_label(&format!("✗ Could not write unit files safely: {error}"));
+                btn.set_sensitive(true);
+                return;
+            }
+
             let reload = capture("systemctl", vec!["--user".into(), "daemon-reload".into()]);
-            let _ = reload.recv().await;
+            if !matches!(reload.recv().await, Ok(Ok(_))) {
+                status.set_label("✗ Units were written, but systemd daemon-reload failed");
+                btn.set_sensitive(true);
+                return;
+            }
             let rx = capture(
                 "systemctl",
                 vec!["--user".into(), "enable".into(), "--now".into(), timer_name.clone()],
@@ -154,13 +265,29 @@ fn tool_path(tool: Tool) -> Option<String> {
         Tool::Rclone => rclone::detect(),
         Tool::Rsync => rsync::detect(),
     };
-    info.map(|i| i.path.to_string_lossy().into_owned())
+    info.and_then(|info| std::fs::canonicalize(info.path).ok())
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
-pub(crate) fn systemd_user_dir() -> String {
+pub(crate) fn systemd_user_dir() -> std::io::Result<PathBuf> {
     let cfg = std::env::var("XDG_CONFIG_HOME")
         .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-    format!("{cfg}/systemd/user")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .map(|home| home.join(".config"))
+        })
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no absolute XDG_CONFIG_HOME or HOME is available",
+            )
+        })?;
+    Ok(cfg.join("systemd/user"))
 }
