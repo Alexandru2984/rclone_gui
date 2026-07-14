@@ -7,45 +7,54 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RCLONE_VERSION: 1.74.4
+  RCLONE_SHA256: fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d
+
+permissions:
+  contents: read
 
 jobs:
   core:
     name: core (fmt + clippy + test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
       - name: Install rsync (for end-to-end tests)
         run: sudo apt-get update && sudo apt-get install -y rsync
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy (core)
-        run: cargo clippy -p cascade-core --all-targets -- -D warnings
+        run: cargo clippy --locked -p cascade-core --all-targets -- -D warnings
       - name: test (core)
-        run: cargo test -p cascade-core
+        run: cargo test --locked -p cascade-core
 
   gui:
     name: gui (build with GTK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Install GTK4 + libadwaita dev
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
       - name: clippy (gui)
-        run: cargo clippy -p cascade-gui --all-targets -- -D warnings
+        run: cargo clippy --locked -p cascade-gui --all-targets -- -D warnings
       - name: test (gui)
-        run: cargo test -p cascade-gui
+        run: cargo test --locked -p cascade-gui
       - name: build (gui)
-        run: cargo build -p cascade-gui --release
+        run: cargo build --locked -p cascade-gui --release
       - name: Headless smoke test
         run: |
           sudo apt-get install -y xvfb dbus-x11 gsettings-desktop-schemas
@@ -61,30 +70,46 @@ jobs:
 
   coverage:
     name: coverage (cascade-core)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@9458fed45835344deb5e69e06e831be047c96abf # cargo-llvm-cov installer
+        with:
+          tool: cargo-llvm-cov@0.8.7
+          fallback: none
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
       - name: Install rsync + rclone (exercise the real tool paths)
         run: |
-          sudo apt-get update && sudo apt-get install -y rsync
-          curl https://rclone.org/install.sh | sudo bash
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rsync unzip
+          archive="$RUNNER_TEMP/rclone.zip"
+          curl --proto '=https' --tlsv1.2 --fail --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip"
+          printf '%s  %s\n' "$RCLONE_SHA256" "$archive" | sha256sum --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/rclone"
+          sudo install -m 0755 \
+            "$RUNNER_TEMP/rclone/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" \
+            /usr/local/bin/rclone
       - name: Measure coverage and fail under 90% lines
         run: |
           # pipefail so the coverage gate's exit code isn't masked by `tee`.
           set -o pipefail
-          cargo llvm-cov -p cascade-core --summary-only --fail-under-lines 90 \
+          cargo llvm-cov --locked -p cascade-core --summary-only --fail-under-lines 90 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
   packaging:
     name: packaging (desktop + appstream)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Install validators
         run: |
           sudo apt-get update
@@ -93,3 +118,5 @@ jobs:
         run: desktop-file-validate packaging/io.github.alexmihai.Cascade.desktop
       - name: Validate AppStream metainfo
         run: appstreamcli validate --no-net packaging/io.github.alexmihai.Cascade.metainfo.xml
+      - name: Validate locked Flatpak Cargo sources
+        run: python3 packaging/flatpak/generate-cargo-sources.py --check

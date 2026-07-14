@@ -1,17 +1,16 @@
 # Flatpak manifest for Cascade.
 #
-# The bundled rsync/rclone checksums below are filled and verified against
-# upstream. One build-time step remains: generate the offline Cargo sources
-# (a sandboxed build has no network), then build:
-#   pip install flatpak-cargo-generator   # or use the upstream script
-#   python flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+# The bundled rsync/rclone checksums are pinned to their upstream releases.
+# Cargo sources are generated deterministically from Cargo.lock and committed so
+# the sandboxed build never needs network access:
+#   python3 packaging/flatpak/generate-cargo-sources.py
 #   flatpak-builder --user --install --force-clean build-dir \
 #       packaging/flatpak/io.github.alexmihai.Cascade.yml
 #
 # rclone and rsync are bundled so the sandboxed app never needs host binaries.
 app-id: io.github.alexmihai.Cascade
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -25,9 +24,8 @@ finish-args:
   # rclone/rsync need network and file access.
   - --share=network
   - --filesystem=home
-  # Desktop notifications and (future) Secret Service.
+  # Desktop notifications.
   - --talk-name=org.freedesktop.Notifications
-  - --talk-name=org.freedesktop.secrets
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
@@ -55,6 +53,14 @@ modules:
         url: https://downloads.rclone.org/v1.74.4/rclone-v1.74.4-linux-amd64.zip
         sha256: fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d
         strip-components: 1
+        only-arches:
+          - x86_64
+      - type: archive
+        url: https://downloads.rclone.org/v1.74.4/rclone-v1.74.4-linux-arm64.zip
+        sha256: 97685285c9ad6a0cf17d5844115d2a67245af6444db672187074bd9c358de419
+        strip-components: 1
+        only-arches:
+          - aarch64
 
   # Cascade itself (offline cargo build using the vendored cargo-sources.json).
   - name: cascade

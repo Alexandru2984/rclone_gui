@@ -95,12 +95,15 @@ sudo apt update
 sudo apt install -y libgtk-4-dev libadwaita-1-dev build-essential
 
 # Runtime tools Cascade drives
-sudo apt install -y rsync
-curl https://rclone.org/install.sh | sudo bash   # or: sudo apt install rclone
+sudo apt install -y rsync rclone
 
-# Rust toolchain (if missing)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Rust toolchain (if missing): install rustup with your trusted package manager,
+# then install the exact toolchain recorded in rust-toolchain.toml.
+rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
 ```
+
+The RC daemon integration requires rclone 1.73.5 or newer and fails closed on
+older or unparseable versions. Ordinary command-mode transfers remain available.
 
 ---
 
@@ -108,13 +111,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```bash
 # Core library: build + run the full test suite (no display needed)
-cargo test -p cascade-core
+cargo test --locked -p cascade-core
 
 # Safe end-to-end demo: rsync dry-run through the whole pipeline
-cargo run -p cascade-core --example dry_run_job
+cargo run --locked -p cascade-core --example dry_run_job
 
 # The GUI (needs libgtk-4-dev + libadwaita-1-dev installed)
-cargo run -p cascade-gui
+cargo run --locked -p cascade-gui
 ```
 
 ---
@@ -125,8 +128,8 @@ Cascade is GTK4/GDK, so it runs natively on **both Wayland and X11** with no cod
 differences — GDK picks the backend automatically. To force one for testing:
 
 ```bash
-GDK_BACKEND=wayland cargo run -p cascade-gui
-GDK_BACKEND=x11     cargo run -p cascade-gui
+GDK_BACKEND=wayland cargo run --locked -p cascade-gui
+GDK_BACKEND=x11     cargo run --locked -p cascade-gui
 ```
 
 For **desktop notifications** and the **app icon** to appear correctly on either
@@ -149,8 +152,8 @@ so it shows up in your app menu with a proper icon and working notifications.
 
 ### Debian / Ubuntu `.deb`
 ```bash
-cargo install cargo-deb        # once
-cargo deb -p cascade-gui       # produces target/debian/cascade_0.1.0_*.deb
+cargo install --locked --version 3.7.0 cargo-deb   # once
+cargo deb --locked -p cascade-gui   # produces target/debian/cascade_0.1.1_*.deb
 sudo apt install ./target/debian/cascade_*.deb
 ```
 `rclone` and `rsync` are listed as **Recommends** (runtime tools), GTK/libadwaita
@@ -159,13 +162,21 @@ runtime libraries are auto-detected.
 Packaging assets live in [`packaging/`](packaging/): the desktop entry, the
 AppStream metainfo, and the scalable icon.
 
+GitHub releases include `SHA256SUMS` and GitHub build-provenance attestations.
+After downloading an artifact, verify both before installing it:
+
+```bash
+sha256sum --ignore-missing --check SHA256SUMS
+gh attestation verify ./cascade_*.deb --repo Alexandru2984/rclone_gui
+```
+
 ### AppImage (universal)
 An AppImage gives a single portable binary across the distro family. Because
 Cascade *spawns* `rclone`/`rsync` at runtime, the AppImage relies on those being
 present on the host `PATH` (they are not bundled). Sketch with
 [`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy) + its GTK plugin:
 ```bash
-cargo build -p cascade-gui --release
+cargo build --locked -p cascade-gui --release
 linuxdeploy --appdir AppDir \
   --executable target/release/cascade \
   --desktop-file packaging/io.github.alexmihai.Cascade.desktop \
@@ -176,8 +187,14 @@ linuxdeploy --appdir AppDir \
 A manifest is provided at
 [`packaging/flatpak/`](packaging/flatpak/) that **bundles `rclone` and `rsync`**
 inside the sandbox (so it never needs host binaries) and grants Wayland + X11.
-It is a template: fill the two `TODO` checksums and generate `cargo-sources.json`
-from `Cargo.lock` (see the manifest header), then `flatpak-builder`.
+All external archives and Cargo crates are versioned and checksum-pinned. After
+changing `Cargo.lock`, regenerate the offline source list before building:
+
+```bash
+python3 packaging/flatpak/generate-cargo-sources.py
+flatpak-builder --user --install --force-clean build-dir \
+  packaging/flatpak/io.github.alexmihai.Cascade.yml
+```
 
 ### Screenshots
 Capture them with [`docs/capture-screenshots.sh`](docs/capture-screenshots.sh)
