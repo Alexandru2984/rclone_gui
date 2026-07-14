@@ -263,6 +263,7 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
     let mut chunk = [0u8; 8192];
     let mut line: Vec<u8> = Vec::with_capacity(256);
     let mut truncated = false;
+    let mut redactor = sanitize::StreamRedactor::new();
 
     loop {
         let n = match reader.read(&mut chunk).await {
@@ -271,7 +272,15 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
         };
         for &b in &chunk[..n] {
             if b == b'\n' {
-                flush_line(&ev, &parser, &mut line, &mut truncated, is_stderr).await;
+                flush_line(
+                    &ev,
+                    &parser,
+                    &mut redactor,
+                    &mut line,
+                    &mut truncated,
+                    is_stderr,
+                )
+                .await;
             } else if line.len() < MAX_LINE_BYTES {
                 line.push(b);
             } else {
@@ -280,7 +289,15 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
         }
     }
     if !line.is_empty() || truncated {
-        flush_line(&ev, &parser, &mut line, &mut truncated, is_stderr).await;
+        flush_line(
+            &ev,
+            &parser,
+            &mut redactor,
+            &mut line,
+            &mut truncated,
+            is_stderr,
+        )
+        .await;
     }
 }
 
@@ -288,6 +305,7 @@ async fn stream_lines<R: AsyncReadExt + Unpin>(
 async fn flush_line(
     ev: &async_channel::Sender<ProcessEvent>,
     parser: &Option<LineParser>,
+    redactor: &mut sanitize::StreamRedactor,
     line: &mut Vec<u8>,
     truncated: &mut bool,
     is_stderr: bool,
@@ -298,7 +316,9 @@ async fn flush_line(
     }
     line.clear();
     *truncated = false;
-    emit_line(ev, parser, sanitize::redact(&text), is_stderr).await;
+    if let Some(text) = redactor.redact_line(&text) {
+        emit_line(ev, parser, text, is_stderr).await;
+    }
 }
 
 /// Emit one output line: a parsed [`ProcessEvent::Progress`] when the parser
@@ -448,6 +468,31 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multiline_private_key_is_suppressed_across_streamed_lines() {
+        let h = spawn(
+            "printf",
+            vec![
+                "before\n-----BEGIN OPENSSH PRIVATE KEY-----\nSUPER-SECRET-BODY\n-----END OPENSSH PRIVATE KEY-----\nafter\n"
+                    .into(),
+            ],
+        );
+        let mut emitted = String::new();
+        while let Ok(ev) = h.events.recv().await {
+            match ev {
+                ProcessEvent::Stdout(line) | ProcessEvent::Stderr(line) => {
+                    emitted.push_str(&line);
+                }
+                ProcessEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(!emitted.contains("SUPER-SECRET-BODY"));
+        assert!(!emitted.contains("PRIVATE KEY"));
+        assert!(emitted.contains("before"));
+        assert!(emitted.contains("after"));
     }
 
     /// Drain a handle to its Finished event, returning (success, code).

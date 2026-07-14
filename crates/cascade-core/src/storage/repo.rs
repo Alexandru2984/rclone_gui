@@ -8,6 +8,7 @@ use rusqlite::params;
 
 use crate::error::{CoreError, Result};
 use crate::job::JobSpec;
+use crate::security::sanitize;
 
 use super::Store;
 
@@ -42,9 +43,33 @@ pub struct ProfileRecord {
 }
 
 impl Store {
-    /// Insert a configured job, returning its id.
+    /// Persist a configured job, returning its id. The full spec is validated
+    /// here so no caller can accidentally bypass the no-credentials policy.
+    pub fn insert_job(&self, spec: &JobSpec) -> Result<i64> {
+        spec.ensure_no_embedded_secrets()?;
+        let options_json = serde_json::to_string(spec)?;
+        let kind = match spec.tool {
+            crate::Tool::Rclone => "rclone",
+            crate::Tool::Rsync => "rsync",
+        };
+        let operation = match spec.op {
+            crate::job::OpKind::Copy => "copy",
+            crate::job::OpKind::Sync => "sync",
+            crate::job::OpKind::Move => "move",
+            crate::job::OpKind::Bisync => "bisync",
+        };
+        self.insert_job_values(
+            &spec.name,
+            kind,
+            operation,
+            &spec.source,
+            &spec.destination,
+            &options_json,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub fn insert_job(
+    fn insert_job_values(
         &self,
         name: &str,
         kind: &str,
@@ -61,8 +86,24 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Low-level insertion is test-only, for migration/corruption fixtures.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_job_raw(
+        &self,
+        name: &str,
+        kind: &str,
+        operation: &str,
+        source: &str,
+        destination: &str,
+        options_json: &str,
+    ) -> Result<i64> {
+        self.insert_job_values(name, kind, operation, source, destination, options_json)
+    }
+
     /// Record the start of a run (status = running), returning its id.
     pub fn start_run(&self, job_id: i64, dry_run: bool, argv_preview: &str) -> Result<i64> {
+        let argv_preview = sanitize::redact(argv_preview);
         self.conn.execute(
             "INSERT INTO job_runs (job_id, status, dry_run, argv_preview, started_at)
              VALUES (?1, 'running', ?2, ?3, ?4)",
@@ -79,6 +120,7 @@ impl Store {
         exit_code: Option<i32>,
         error_summary: Option<&str>,
     ) -> Result<()> {
+        let error_summary = error_summary.map(sanitize::redact);
         self.conn.execute(
             "UPDATE job_runs
              SET status = ?1, exit_code = ?2, ended_at = ?3, error_summary = ?4
@@ -100,6 +142,168 @@ impl Store {
         Ok(n)
     }
 
+    /// Remove legacy persisted specs that contain credentials and redact any
+    /// remaining free-form history/settings fields. Call this during startup
+    /// after upgrading from a version that allowed embedded secrets.
+    pub fn purge_embedded_secrets(&self) -> Result<usize> {
+        let mut secret_jobs = Vec::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, source, destination, options_json FROM jobs")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, source, destination, json) = row?;
+                let parsed_secret =
+                    serde_json::from_str::<JobSpec>(&json).is_ok_and(|spec| spec.contains_secret());
+                if parsed_secret
+                    || sanitize::contains_secret(&source)
+                    || sanitize::contains_secret(&destination)
+                    || sanitize::contains_secret(&json)
+                {
+                    secret_jobs.push(id);
+                }
+            }
+        }
+
+        let mut secret_profiles = Vec::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, source, destination, options_json FROM profiles")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, source, destination, json) = row?;
+                let parsed_secret =
+                    serde_json::from_str::<JobSpec>(&json).is_ok_and(|spec| spec.contains_secret());
+                if parsed_secret
+                    || sanitize::contains_secret(&source)
+                    || sanitize::contains_secret(&destination)
+                    || sanitize::contains_secret(&json)
+                {
+                    secret_profiles.push(id);
+                }
+            }
+        }
+
+        let mut secret_queue_items = Vec::new();
+        {
+            let mut stmt = self.conn.prepare("SELECT id, spec_json FROM queue_items")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (id, json) = row?;
+                let parsed_secret =
+                    serde_json::from_str::<JobSpec>(&json).is_ok_and(|spec| spec.contains_secret());
+                if parsed_secret || sanitize::contains_secret(&json) {
+                    secret_queue_items.push(id);
+                }
+            }
+        }
+
+        let mut run_updates = Vec::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, argv_preview, error_summary FROM job_runs")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, preview, error) = row?;
+                let safe_preview = sanitize::redact(&preview);
+                let safe_error = error.as_deref().map(sanitize::redact);
+                if safe_preview != preview || safe_error != error {
+                    run_updates.push((id, safe_preview, safe_error));
+                }
+            }
+        }
+
+        let mut setting_updates = Vec::new();
+        {
+            let mut stmt = self.conn.prepare("SELECT key, value FROM settings")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (key, value) = row?;
+                let safe = sanitize::redact(&value);
+                if safe != value {
+                    setting_updates.push((key, safe));
+                }
+            }
+        }
+
+        let mut secret_log_rows = Vec::new();
+        {
+            let mut stmt = self.conn.prepare("SELECT id, log_path FROM run_logs")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (id, path) = row?;
+                if sanitize::contains_secret(&path) {
+                    secret_log_rows.push(id);
+                }
+            }
+        }
+
+        let mut changed = 0;
+        let tx = self.conn.unchecked_transaction()?;
+        for id in secret_jobs {
+            changed += tx.execute("DELETE FROM jobs WHERE id = ?1", [id])?;
+        }
+        for id in secret_profiles {
+            changed += tx.execute("DELETE FROM profiles WHERE id = ?1", [id])?;
+        }
+        for id in secret_queue_items {
+            changed += tx.execute("DELETE FROM queue_items WHERE id = ?1", [id])?;
+        }
+        for (id, preview, error) in run_updates {
+            changed += tx.execute(
+                "UPDATE job_runs SET argv_preview = ?1, error_summary = ?2 WHERE id = ?3",
+                params![preview, error, id],
+            )?;
+        }
+        for (key, value) in setting_updates {
+            changed += tx.execute(
+                "UPDATE settings SET value = ?1 WHERE key = ?2",
+                params![value, key],
+            )?;
+        }
+        for id in secret_log_rows {
+            changed += tx.execute("DELETE FROM run_logs WHERE id = ?1", [id])?;
+        }
+        tx.commit()?;
+
+        if changed > 0 {
+            self.conn.execute_batch(
+                "PRAGMA wal_checkpoint(TRUNCATE);
+                 VACUUM;",
+            )?;
+        }
+        Ok(changed)
+    }
+
     /// Record the on-disk log for a finished run.
     pub fn insert_run_log(
         &self,
@@ -107,6 +311,11 @@ impl Store {
         log_path: &str,
         level_counts_json: &str,
     ) -> Result<()> {
+        if sanitize::contains_secret(log_path) {
+            return Err(CoreError::InvalidCommand(
+                "refusing to persist a log path containing a credential".into(),
+            ));
+        }
         self.conn.execute(
             "INSERT INTO run_logs (run_id, log_path, level_counts_json) VALUES (?1, ?2, ?3)",
             params![run_id, log_path, level_counts_json],
@@ -132,13 +341,7 @@ impl Store {
     /// Refuses to persist a spec that embeds a credential — Cascade never stores
     /// secrets; configure an rclone remote and reference it as `remote:path`.
     pub fn save_profile(&self, spec: &JobSpec) -> Result<i64> {
-        if spec.contains_secret() {
-            return Err(CoreError::InvalidCommand(
-                "this job embeds a credential — configure an rclone remote (rclone config) \
-                 and use it as 'remote:path' instead of saving the secret"
-                    .into(),
-            ));
-        }
+        spec.ensure_no_embedded_secrets()?;
         let options_json = serde_json::to_string(spec)?;
         let kind = match spec.tool {
             crate::Tool::Rclone => "rclone",
@@ -193,7 +396,9 @@ impl Store {
         for row in rows {
             let (id, name, options_json) = row?;
             if let Ok(spec) = serde_json::from_str::<JobSpec>(&options_json) {
-                out.push(ProfileRecord { id, name, spec });
+                if !spec.contains_secret() {
+                    out.push(ProfileRecord { id, name, spec });
+                }
             }
         }
         Ok(out)
@@ -209,9 +414,12 @@ impl Store {
     /// Replace the persisted pending-queue with `specs`, in order.
     ///
     /// Called on every queue mutation so the on-disk copy always mirrors the
-    /// still-pending jobs. Secret-bearing specs are the caller's responsibility
-    /// to exclude — Cascade never persists credentials (see the threat model).
+    /// still-pending jobs. Validation happens before the transaction so a bad
+    /// replacement cannot erase an existing clean queue.
     pub fn queue_replace(&self, specs: &[JobSpec]) -> Result<()> {
+        for spec in specs {
+            spec.ensure_no_embedded_secrets()?;
+        }
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM queue_items", [])?;
         {
@@ -241,7 +449,9 @@ impl Store {
                 |r| r.get(0),
             )
             .ok();
-        Ok(json.and_then(|j| serde_json::from_str::<JobSpec>(&j).ok()))
+        Ok(json
+            .and_then(|j| serde_json::from_str::<JobSpec>(&j).ok())
+            .filter(|spec| !spec.contains_secret()))
     }
 
     /// Load the persisted pending-queue specs, in saved order.
@@ -253,7 +463,9 @@ impl Store {
         let mut out = Vec::new();
         for row in rows {
             if let Ok(spec) = serde_json::from_str::<JobSpec>(&row?) {
-                out.push(spec);
+                if !spec.contains_secret() {
+                    out.push(spec);
+                }
             }
         }
         Ok(out)
@@ -294,7 +506,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
 
         let job_id = store
-            .insert_job(
+            .insert_job_raw(
                 "nightly",
                 "rsync",
                 "sync",
@@ -362,7 +574,7 @@ mod tests {
     fn interrupted_runs_are_failed_on_cleanup() {
         let store = Store::open_in_memory().unwrap();
         let job = store
-            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{}")
             .unwrap();
         store.start_run(job, false, "cmd").unwrap(); // left as 'running'
 
@@ -404,7 +616,7 @@ mod tests {
     fn run_log_can_be_recorded() {
         let store = Store::open_in_memory().unwrap();
         let job = store
-            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{}")
             .unwrap();
         let run = store.start_run(job, false, "cmd").unwrap();
         store
@@ -485,7 +697,7 @@ mod tests {
         };
         let options_json = serde_json::to_string(&spec).unwrap();
         let job = store
-            .insert_job(
+            .insert_job_raw(
                 "reload me",
                 "rclone",
                 "sync",
@@ -512,7 +724,7 @@ mod tests {
     fn history_is_newest_first() {
         let store = Store::open_in_memory().unwrap();
         let j = store
-            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{}")
             .unwrap();
         let r1 = store.start_run(j, false, "cmd1").unwrap();
         let r2 = store.start_run(j, false, "cmd2").unwrap();
@@ -525,7 +737,7 @@ mod tests {
     fn recent_runs_respects_the_limit() {
         let store = Store::open_in_memory().unwrap();
         let j = store
-            .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+            .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{}")
             .unwrap();
         for _ in 0..5 {
             store.start_run(j, false, "cmd").unwrap();
@@ -583,7 +795,7 @@ mod tests {
     fn job_spec_for_run_returns_none_on_bad_json() {
         let store = Store::open_in_memory().unwrap();
         let job = store
-            .insert_job("j", "rsync", "copy", "/a", "/b", "{not valid")
+            .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{not valid")
             .unwrap();
         let run = store.start_run(job, false, "cmd").unwrap();
         assert!(store.job_spec_for_run(run).unwrap().is_none());
@@ -593,7 +805,7 @@ mod tests {
     fn finish_run_records_error_summary() {
         let store = Store::open_in_memory().unwrap();
         let job = store
-            .insert_job("j", "rsync", "sync", "/a", "/b", "{}")
+            .insert_job_raw("j", "rsync", "sync", "/a", "/b", "{}")
             .unwrap();
         let run = store.start_run(job, false, "cmd").unwrap();
         store
@@ -603,5 +815,127 @@ mod tests {
         assert_eq!(r.status, "failed");
         assert_eq!(r.exit_code, Some(23));
         assert!(r.ended_at.is_some());
+    }
+
+    #[test]
+    fn job_and_queue_persistence_reject_credentials_at_the_store_boundary() {
+        let store = Store::open_in_memory().unwrap();
+        let mut clean = JobSpec {
+            name: "clean".into(),
+            tool: crate::Tool::Rclone,
+            op: crate::job::OpKind::Copy,
+            source: "remote:source".into(),
+            destination: "/destination".into(),
+            dry_run: true,
+            delete: false,
+            options: Default::default(),
+        };
+        assert!(store.insert_job(&clean).is_ok());
+        store.queue_replace(&[clean.clone()]).unwrap();
+
+        clean.source = "https://alice:embedded-secret@example.com/data".into();
+        assert!(store.insert_job(&clean).is_err());
+        assert!(store.queue_replace(&[clean]).is_err());
+        assert_eq!(store.queue_list().unwrap().len(), 1);
+
+        let jobs: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM jobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(jobs, 1);
+    }
+
+    #[test]
+    fn startup_purge_removes_legacy_secrets_and_redacts_freeform_rows() {
+        let store = Store::open_in_memory().unwrap();
+        let clean = JobSpec {
+            name: "clean".into(),
+            tool: crate::Tool::Rsync,
+            op: crate::job::OpKind::Copy,
+            source: "/source".into(),
+            destination: "/destination".into(),
+            dry_run: true,
+            delete: false,
+            options: Default::default(),
+        };
+        let clean_job = store.insert_job(&clean).unwrap();
+        let clean_run = store
+            .start_run(clean_job, true, "rsync safe-preview")
+            .unwrap();
+        store
+            .finish_run(clean_run, "failed", Some(1), Some("safe error"))
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE job_runs SET argv_preview = 'rsync --password old-secret',
+                 error_summary = 'Authorization: Bearer old-bearer' WHERE id = ?1",
+                [clean_run],
+            )
+            .unwrap();
+
+        let mut leaky = clean.clone();
+        leaky.name = "legacy leak".into();
+        leaky.options.extra_flags = vec!["--s3-secret-access-key".into(), "aws-secret".into()];
+        let leaky_json = serde_json::to_string(&leaky).unwrap();
+        store
+            .insert_job_raw(
+                &leaky.name,
+                "rclone",
+                "copy",
+                &leaky.source,
+                &leaky.destination,
+                &leaky_json,
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO profiles
+                 (name, kind, operation, source, destination, options_json, created_at, updated_at)
+                 VALUES ('leaky', 'rclone', 'copy', '/a', '/b', ?1, 0, 0)",
+                [&leaky_json],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO queue_items (spec_json, position, created_at) VALUES (?1, 0, 0)",
+                [&leaky_json],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('legacy', 'client_secret=old-oauth-secret')",
+                [],
+            )
+            .unwrap();
+
+        assert!(store.purge_embedded_secrets().unwrap() >= 4);
+        let jobs: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM jobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(jobs, 1);
+        assert!(store.list_profiles().unwrap().is_empty());
+        assert!(store.queue_list().unwrap().is_empty());
+        assert!(!store.recent_runs(1).unwrap()[0]
+            .argv_preview
+            .contains("old-secret"));
+        let error: String = store
+            .conn
+            .query_row(
+                "SELECT error_summary FROM job_runs WHERE id = ?1",
+                [clean_run],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!error.contains("old-bearer"));
+        assert!(!store
+            .get_setting("legacy")
+            .unwrap()
+            .unwrap()
+            .contains("old-oauth-secret"));
     }
 }

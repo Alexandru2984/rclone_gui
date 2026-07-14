@@ -299,15 +299,7 @@ impl QueueView {
         // Sanitized: persisted to the DB and written to the on-disk log.
         let preview = spec.preview_sanitized().unwrap_or_default();
 
-        let options_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".into());
-        let job_id = match self.ctx.store.insert_job(
-            &spec.name,
-            kind_str(spec.tool),
-            op_str(&spec),
-            &spec.source,
-            &spec.destination,
-            &options_json,
-        ) {
+        let job_id = match self.ctx.store.insert_job(&spec) {
             Ok(j) => j,
             Err(e) => {
                 row.set_subtitle(&format!("database error: {e}"));
@@ -432,23 +424,6 @@ impl QueueView {
         let empty = self.items.borrow().is_empty();
         self.empty.set_visible(empty);
         self.list.set_visible(!empty);
-    }
-}
-
-fn kind_str(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Rclone => "rclone",
-        Tool::Rsync => "rsync",
-    }
-}
-
-fn op_str(spec: &JobSpec) -> &'static str {
-    use cascade_core::job::OpKind::*;
-    match spec.op {
-        Copy => "copy",
-        Sync => "sync",
-        Move => "move",
-        Bisync => "bisync",
     }
 }
 

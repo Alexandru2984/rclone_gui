@@ -111,19 +111,17 @@ proptest! {
         prop_assert!(total(&rc) <= lines.len() as u64);
     }
 
-    /// The command preview always begins with the binary name and, once
-    /// sanitized, is free of a password embedded in a `--sftp-pass` flag. The
-    /// secret carries a distinctive prefix so the check can't be satisfied by
-    /// coincidental substrings of the fixed command text.
+    /// Secret-bearing job specs are refused before argv/preview generation,
+    /// while the defense-in-depth sanitizer still removes the same secret.
     #[test]
-    fn preview_starts_with_binary_and_sanitizes(tail in "[!-~]{0,20}") {
+    fn preview_rejects_embedded_secrets(tail in "[!-~]{0,20}") {
         let secret = format!("SEKRETzzz{tail}");
         let mut spec = make_spec(Tool::Rsync, OpKind::Copy, "/src/", "/dst/");
         spec.options.extra_flags = vec![format!("--sftp-pass={secret}")];
-        let preview = spec.preview().unwrap();
-        prop_assert!(preview.starts_with("rsync "));
-        prop_assert!(preview.contains("SEKRETzzz"), "raw preview should carry the secret");
-        let safe = spec.preview_sanitized().unwrap();
+        prop_assert!(spec.contains_secret());
+        prop_assert!(spec.preview().is_err());
+        prop_assert!(spec.preview_sanitized().is_err());
+        let safe = sanitize::redact(&format!("rsync --sftp-pass={secret}"));
         prop_assert!(!safe.contains("SEKRETzzz"), "secret leaked into sanitized preview: {safe}");
     }
 

@@ -38,6 +38,20 @@ impl AppCtx {
         if let Err(e) = store.fail_interrupted_runs() {
             warn!("could not clean up interrupted runs: {e}");
         }
+        match store.purge_embedded_secrets() {
+            Ok(count) if count > 0 => {
+                warn!("purged or redacted {count} legacy records containing credentials")
+            }
+            Ok(_) => {}
+            Err(e) => warn!("could not purge legacy credentials from the database: {e}"),
+        }
+        match cascade_core::logs::sanitize_existing_logs(&paths.log_dir) {
+            Ok(count) if count > 0 => {
+                warn!("re-sanitized {count} historical log files containing credentials")
+            }
+            Ok(_) => {}
+            Err(e) => warn!("could not re-sanitize historical logs: {e}"),
+        }
         // Prune log files older than 30 days.
         let _ = cascade_core::logs::prune_logs_older_than_days(&paths.log_dir, 30);
         let settings = AppSettings::load(&store);

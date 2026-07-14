@@ -10,17 +10,34 @@ pub use repo::{ProfileRecord, RunRecord};
 
 use rusqlite::Connection;
 
-use crate::error::Result;
+use crate::error::{CoreError, Result};
+use crate::security::sanitize;
 
 /// An open database handle.
 pub struct Store {
-    pub conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
     /// Open (or create) the database at `path` and run pending migrations.
     pub fn open(path: &std::path::Path) -> Result<Self> {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                return Err(CoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "database path must be a real file, not a symlink",
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(CoreError::Io(error)),
+        }
         let conn = Connection::open(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Self::init(conn)
     }
 
@@ -33,6 +50,7 @@ impl Store {
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "secure_delete", "ON")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);",
         )?;
@@ -86,6 +104,11 @@ impl Store {
 
     /// Convenience: write a setting value (upsert).
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        if sanitize::contains_secret(value) {
+            return Err(CoreError::InvalidCommand(
+                "refusing to persist a setting containing a credential".into(),
+            ));
+        }
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -138,7 +161,7 @@ mod tests {
                 schema::MIGRATIONS.len() as i64
             );
             store
-                .insert_job("j", "rsync", "copy", "/a", "/b", "{}")
+                .insert_job_raw("j", "rsync", "copy", "/a", "/b", "{}")
                 .unwrap();
             store.set_setting("k", "v").unwrap();
         }
@@ -185,5 +208,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 7);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_database_is_private_and_symlinks_are_refused() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cascade.db");
+        drop(Store::open(&path).unwrap());
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        let link = dir.path().join("linked.db");
+        symlink(&path, &link).unwrap();
+        assert!(Store::open(&link).is_err());
     }
 }

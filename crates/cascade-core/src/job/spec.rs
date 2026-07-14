@@ -179,6 +179,7 @@ impl JobSpec {
 
     /// Build the concrete argv. Never produces a shell string.
     pub fn build_argv(&self) -> Result<Vec<String>> {
+        self.ensure_no_embedded_secrets()?;
         let o = &self.options;
         match self.tool {
             Tool::Rclone => {
@@ -232,18 +233,27 @@ impl JobSpec {
         Ok(sanitize::redact(&self.preview()?))
     }
 
-    /// Whether this spec embeds something the sanitizer recognizes as a secret
-    /// (a password in a connection string, a `--*-pass` flag, a credential URL).
-    /// Used to refuse persisting secrets into a profile — Cascade is never a
-    /// credential store; users should configure an rclone remote instead.
+    /// Whether any serialized field embeds something the sanitizer recognizes
+    /// as a secret (connection-string credentials, provider flags, tokens,
+    /// private keys, and common config key/value forms).
     pub fn contains_secret(&self) -> bool {
-        let joined = format!(
-            "{} {} {}",
-            self.source,
-            self.destination,
-            self.options.extra_flags.join(" ")
-        );
-        sanitize::redact(&joined) != joined
+        let serialized_secret = serde_json::to_string(self)
+            .is_ok_and(|serialized| sanitize::contains_secret(&serialized));
+        let joined_flags = self.options.extra_flags.join(" ");
+        serialized_secret || sanitize::contains_secret(&joined_flags)
+    }
+
+    /// Reject credentials embedded in a job before they can reach argv, the
+    /// process list, logs, history, profiles, or the persisted queue.
+    pub fn ensure_no_embedded_secrets(&self) -> Result<()> {
+        if self.contains_secret() {
+            return Err(CoreError::InvalidCommand(
+                "this job embeds a credential; configure an rclone remote or an SSH agent/key \
+                 outside Cascade, then reference it without putting the secret in the job"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -443,19 +453,23 @@ mod tests {
         let mut u = spec(Tool::Rclone, OpKind::Copy);
         u.source = "https://alice:s3cr3t@example.com".into();
         assert!(u.contains_secret());
+
+        let mut provider = spec(Tool::Rclone, OpKind::Copy);
+        provider.options.extra_flags = vec!["--s3-secret-access-key=aws-secret".into()];
+        assert!(provider.contains_secret());
+
+        let mut nested = spec(Tool::Rclone, OpKind::Copy);
+        nested.options.excludes = vec!["pass=hidden-in-an-option".into()];
+        assert!(nested.contains_secret());
     }
 
     #[test]
-    fn preview_sanitized_redacts_secrets_in_flags() {
+    fn secret_bearing_jobs_cannot_build_or_preview() {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
         s.options.extra_flags = vec!["--sftp-pass=hunter2".into()];
-        let raw = s.preview().unwrap();
-        let safe = s.preview_sanitized().unwrap();
-        assert!(raw.contains("hunter2"), "raw preview keeps the secret");
-        assert!(
-            !safe.contains("hunter2"),
-            "sanitized preview must redact it"
-        );
+        assert!(s.build_argv().is_err());
+        assert!(s.preview().is_err());
+        assert!(s.preview_sanitized().is_err());
     }
 
     #[test]

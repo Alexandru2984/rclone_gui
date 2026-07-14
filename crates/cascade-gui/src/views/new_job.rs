@@ -890,15 +890,7 @@ impl Inputs {
         let preview = spec.preview_sanitized().unwrap_or_default();
 
         // Persist the job and the run we are about to start.
-        let options_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".into());
-        let job_id = match self.ctx.store.insert_job(
-            &spec.name,
-            kind_str(spec.tool),
-            op_str(spec.op),
-            &spec.source,
-            &spec.destination,
-            &options_json,
-        ) {
+        let job_id = match self.ctx.store.insert_job(&spec) {
             Ok(id) => id,
             Err(e) => {
                 self.log_line(&format!("✗ database: {e}"));
@@ -1388,22 +1380,6 @@ fn file_row(f: &RcTransfer) -> gtk::Widget {
     row.upcast()
 }
 
-fn kind_str(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Rclone => "rclone",
-        Tool::Rsync => "rsync",
-    }
-}
-
-fn op_str(op: OpKind) -> &'static str {
-    match op {
-        OpKind::Copy => "copy",
-        OpKind::Sync => "sync",
-        OpKind::Move => "move",
-        OpKind::Bisync => "bisync",
-    }
-}
-
 fn last_component(p: &str) -> String {
     let t = p.trim_end_matches('/');
     t.rsplit('/')
@@ -1489,19 +1465,5 @@ mod tests {
         assert_eq!(fmt_duration(75), "1:15");
         assert_eq!(fmt_duration(3600), "1:00:00");
         assert_eq!(fmt_duration(3723), "1:02:03");
-    }
-
-    #[test]
-    fn op_str_covers_every_opkind() {
-        assert_eq!(op_str(OpKind::Copy), "copy");
-        assert_eq!(op_str(OpKind::Sync), "sync");
-        assert_eq!(op_str(OpKind::Move), "move");
-        assert_eq!(op_str(OpKind::Bisync), "bisync");
-    }
-
-    #[test]
-    fn kind_str_maps_tools() {
-        assert_eq!(kind_str(Tool::Rclone), "rclone");
-        assert_eq!(kind_str(Tool::Rsync), "rsync");
     }
 }

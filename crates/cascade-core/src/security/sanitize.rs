@@ -11,6 +11,7 @@ const REDACTED: &str = "«redacted»";
 
 struct Patterns {
     rules: Vec<(Regex, &'static str)>,
+    secret_option: Regex,
 }
 
 fn patterns() -> &'static Patterns {
@@ -25,7 +26,7 @@ fn patterns() -> &'static Patterns {
             // common secret-bearing CLI flags: --pass X, --password=X, --rc-pass, --token …
             (
                 Regex::new(
-                    r"(?i)(--(?:password|pass|rc-pass|rc-user|token|client-secret|sftp-pass|sa-credentials)[= ])\S+",
+                    r#"(?i)(--(?:rc-user|[a-z0-9-]*(?:pass(?:word)?|secret|token|credential|api-key|access-key|private-key|key-pem)[a-z0-9-]*)[= ])(?:"[^"]*"|'[^']*'|\S+)"#,
                 )
                 .unwrap(),
                 "$1«redacted»",
@@ -45,6 +46,34 @@ fn patterns() -> &'static Patterns {
                 Regex::new(r#"(?i)((?:access|refresh)_token"?\s*[:=]\s*"?)[A-Za-z0-9._\-]+"#).unwrap(),
                 "$1«redacted»",
             ),
+            // Generic `key=value` config entries such as pass=,
+            // s3_secret_access_key=, api-token=, or private_key=.
+            (
+                Regex::new(
+                    r#"(?i)([a-z0-9_-]*(?:pass(?:word)?|secret|token|credential|api[_-]?key|access[_-]?key|private[_-]?key|key[_-]?pem)[a-z0-9_-]*\s*=\s*["']?)([^"',}\s]+)"#,
+                )
+                .unwrap(),
+                "$1«redacted»",
+            ),
+            // JSON object `key: value` forms. Requiring an object delimiter
+            // avoids treating an rclone remote such as `token:path` as a
+            // credential.
+            (
+                Regex::new(
+                    r#"(?i)([,{]\s*["']?[a-z0-9_-]*(?:pass(?:word)?|secret|token|credential|api[_-]?key|access[_-]?key|private[_-]?key|key[_-]?pem)[a-z0-9_-]*["']?\s*:\s*["']?)([^"',}\s]+)"#,
+                )
+                .unwrap(),
+                "$1«redacted»",
+            ),
+            // Line-oriented config `key: value` forms require whitespace after
+            // the colon for the same remote-name ambiguity reason.
+            (
+                Regex::new(
+                    r#"(?im)^(\s*["']?[a-z0-9_-]*(?:pass(?:word)?|secret|token|credential|api[_-]?key|access[_-]?key|private[_-]?key|key[_-]?pem)[a-z0-9_-]*["']?\s*:\s+["']?)([^"',}\s]+)"#,
+                )
+                .unwrap(),
+                "$1«redacted»",
+            ),
             // PEM private-key bodies
             (
                 Regex::new(
@@ -54,7 +83,14 @@ fn patterns() -> &'static Patterns {
                 REDACTED,
             ),
         ];
-        Patterns { rules }
+        let secret_option = Regex::new(
+            r"(?i)--(?:rc-user|[a-z0-9-]*(?:pass(?:word)?|secret|token|credential|api-key|access-key|private-key|key-pem)[a-z0-9-]*)",
+        )
+        .unwrap();
+        Patterns {
+            rules,
+            secret_option,
+        }
     })
 }
 
@@ -65,6 +101,57 @@ pub fn redact(input: &str) -> String {
         out = re.replace_all(&out, *replacement).into_owned();
     }
     out
+}
+
+/// Conservatively detect secret-bearing text, including a legacy split-form
+/// option such as `--sftp-pass` whose value lives in the next argv token.
+pub fn contains_secret(input: &str) -> bool {
+    patterns().secret_option.is_match(input) || redact(input) != input
+}
+
+/// Stateful redactor for line-oriented process output.
+///
+/// A PEM private key spans multiple lines, so applying [`redact`] to each line
+/// independently is not sufficient. Once a private-key header is observed,
+/// every subsequent line is suppressed through the matching footer.
+#[derive(Debug, Default)]
+pub struct StreamRedactor {
+    inside_private_key: bool,
+}
+
+impl StreamRedactor {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Redact one logical line. `None` means that the line was part of a PEM
+    /// private-key body and must not be emitted at all.
+    pub fn redact_line(&mut self, line: &str) -> Option<String> {
+        if self.inside_private_key {
+            if is_private_key_end(line) {
+                self.inside_private_key = false;
+            }
+            return None;
+        }
+
+        if is_private_key_begin(line) {
+            if !is_private_key_end(line) {
+                self.inside_private_key = true;
+            }
+            return Some(REDACTED.to_string());
+        }
+
+        Some(redact(line))
+    }
+}
+
+fn is_private_key_begin(line: &str) -> bool {
+    line.contains("-----BEGIN ") && line.contains("PRIVATE KEY-----")
+}
+
+fn is_private_key_end(line: &str) -> bool {
+    line.contains("-----END ") && line.contains("PRIVATE KEY-----")
 }
 
 #[cfg(test)]
@@ -84,6 +171,44 @@ mod tests {
         assert!(!redact("rclone --password hunter2 foo").contains("hunter2"));
         assert!(!redact("--rc-pass=topsecret").contains("topsecret"));
         assert!(!redact("--token abc.def.ghi").contains("abc.def.ghi"));
+    }
+
+    #[test]
+    fn redacts_provider_specific_secret_flags() {
+        for flag in [
+            "--s3-secret-access-key=aws-secret",
+            "--crypt-password crypt-secret",
+            "--webdav-pass=webdav-secret",
+            "--api-token token-secret",
+            "--sftp-key-pem=private-material",
+        ] {
+            let out = redact(flag);
+            assert!(!out.contains(flag.split(['=', ' ']).next_back().unwrap()));
+        }
+    }
+
+    #[test]
+    fn redacts_generic_config_and_json_secrets() {
+        for line in [
+            "pass=inline-secret",
+            "s3_secret_access_key=aws-secret",
+            r#"{"client_secret":"oauth-secret"}"#,
+            r#"{"api_token":"api-secret"}"#,
+        ] {
+            let out = redact(line);
+            assert!(!out.contains("inline-secret"));
+            assert!(!out.contains("aws-secret"));
+            assert!(!out.contains("oauth-secret"));
+            assert!(!out.contains("api-secret"));
+        }
+    }
+
+    #[test]
+    fn remote_names_that_resemble_secret_keys_are_not_credentials() {
+        for endpoint in ["token:path", "secret:backup", "password:archive"] {
+            assert_eq!(redact(endpoint), endpoint);
+            assert!(!contains_secret(endpoint));
+        }
     }
 
     #[test]
@@ -182,5 +307,23 @@ mod tests {
         // A word like "password" in prose (no flag prefix / value) is untouched.
         let line = "the password policy requires 12 characters";
         assert_eq!(redact(line), line);
+    }
+
+    #[test]
+    fn stream_redactor_suppresses_multiline_private_key() {
+        let mut redactor = StreamRedactor::new();
+        assert_eq!(
+            redactor.redact_line("prefix -----BEGIN OPENSSH PRIVATE KEY-----"),
+            Some(REDACTED.to_string())
+        );
+        assert_eq!(redactor.redact_line("SUPER-SECRET-BODY"), None);
+        assert_eq!(
+            redactor.redact_line("-----END OPENSSH PRIVATE KEY-----"),
+            None
+        );
+        assert_eq!(
+            redactor.redact_line("safe again"),
+            Some("safe again".to_string())
+        );
     }
 }

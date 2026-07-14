@@ -5,6 +5,7 @@
 //! reject NUL bytes (which cannot appear in an argv item anyway).
 
 use crate::error::{CoreError, Result};
+use crate::security::sanitize;
 use crate::Tool;
 
 /// Split a custom-flags string into argv tokens using POSIX shell rules
@@ -35,6 +36,13 @@ pub fn validate_extra(tool: Tool, tokens: &[String]) -> Result<()> {
             return Err(CoreError::InvalidCommand(format!(
                 "custom flag '{token}' must use long form (--option or --option=value)"
             )));
+        }
+
+        if sanitize::contains_secret(token) {
+            return Err(CoreError::InvalidCommand(
+                "custom flags must not contain credentials; configure authentication outside +                 Cascade and reference it without embedding the secret"
+                    .into(),
+            ));
         }
 
         let key = token[2..]
@@ -214,6 +222,20 @@ mod tests {
             "--remote-option=--delete",
         ] {
             assert!(validate_extra(Tool::Rsync, &[bad.into()]).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn extra_flags_cannot_embed_credentials() {
+        for bad in [
+            "--s3-secret-access-key=aws-secret",
+            "--crypt-password=crypt-secret",
+            "--header=Authorization: Bearer token-secret",
+        ] {
+            assert!(
+                validate_extra(Tool::Rclone, &[bad.into()]).is_err(),
+                "{bad}"
+            );
         }
     }
 }
