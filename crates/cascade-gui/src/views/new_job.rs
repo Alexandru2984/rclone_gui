@@ -242,7 +242,7 @@ pub fn build(
         ))
         .build();
     let adv_custom = adw::EntryRow::builder()
-        .title(crate::i18n::tr("Custom flags (quoted, space-separated)"))
+        .title(crate::i18n::tr("Custom flags (--option or --option=value)"))
         .build();
 
     let advanced = adw::ExpanderRow::builder()
@@ -668,6 +668,7 @@ impl Inputs {
 
         let extra_flags =
             flags::parse(&self.adv_custom.text()).map_err(|e| format!("Custom flags: {e}"))?;
+        flags::validate_extra(tool, &extra_flags).map_err(|e| format!("Custom flags: {e}"))?;
         let options = AdvancedOptions {
             excludes: split_csv(&self.adv_excludes.text()),
             includes: split_csv(&self.adv_includes.text()),

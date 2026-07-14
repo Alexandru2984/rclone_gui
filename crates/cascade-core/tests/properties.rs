@@ -119,7 +119,7 @@ proptest! {
     fn preview_starts_with_binary_and_sanitizes(tail in "[!-~]{0,20}") {
         let secret = format!("SEKRETzzz{tail}");
         let mut spec = make_spec(Tool::Rsync, OpKind::Copy, "/src/", "/dst/");
-        spec.options.extra_flags = vec!["--sftp-pass".into(), secret.clone()];
+        spec.options.extra_flags = vec![format!("--sftp-pass={secret}")];
         let preview = spec.preview().unwrap();
         prop_assert!(preview.starts_with("rsync "));
         prop_assert!(preview.contains("SEKRETzzz"), "raw preview should carry the secret");

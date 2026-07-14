@@ -196,26 +196,23 @@ impl JobSpec {
                         "two-way sync (bisync) is available with rclone only".into(),
                     ));
                 }
-                let mut extra_flags = o.extra_flags.clone();
-                if o.checksum {
-                    extra_flags.push("--checksum".into());
-                }
                 let mut opts = RsyncOptions {
                     dry_run: self.dry_run,
                     delete: self.delete_effective(),
                     compress: o.compress,
+                    checksum: o.checksum,
                     max_delete: o.max_delete,
                     backup_dir: o.backup_dir.clone(),
                     excludes: o.excludes.clone(),
                     includes: o.includes.clone(),
                     ssh_port: o.ssh_port,
-                    extra_flags,
+                    extra_flags: o.extra_flags.clone(),
                     ..Default::default()
                 };
                 // rsync has no `move`; emulate it with --remove-source-files.
                 if self.op == OpKind::Move {
                     opts.delete = false; // moving is not mirroring
-                    opts.extra_flags.push("--remove-source-files".into());
+                    opts.remove_source_files = true;
                 }
                 rsync_args(&self.source, &self.destination, &opts)
             }
@@ -271,7 +268,10 @@ mod tests {
     fn rclone_copy_builds_copy_argv() {
         let argv = spec(Tool::Rclone, OpKind::Copy).build_argv().unwrap();
         assert_eq!(argv[0], "copy");
-        assert_eq!(&argv[1..3], &["/src/".to_string(), "/dst/".to_string()]);
+        assert_eq!(
+            &argv[argv.len() - 2..],
+            &["/src/".to_string(), "/dst/".to_string()]
+        );
     }
 
     #[test]
@@ -352,7 +352,10 @@ mod tests {
         s.options.resync = true;
         let argv = s.build_argv().unwrap();
         assert_eq!(argv[0], "bisync");
-        assert_eq!(&argv[1..3], &["/src/".to_string(), "/dst/".to_string()]);
+        assert_eq!(
+            &argv[argv.len() - 2..],
+            &["/src/".to_string(), "/dst/".to_string()]
+        );
         assert!(argv.contains(&"--resync".to_string()));
         assert_eq!(s.risk(), RiskLevel::Destructive);
     }
@@ -380,6 +383,17 @@ mod tests {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
         s.dry_run = true;
         assert!(s.build_argv().unwrap().contains(&"-n".to_string()));
+    }
+
+    #[test]
+    fn custom_flags_cannot_negate_dry_run_or_delete_guard() {
+        let mut s = spec(Tool::Rclone, OpKind::Sync);
+        s.dry_run = true;
+        s.options.max_delete = Some(1);
+        for bypass in ["--dry-run=false", "--no-dry-run", "--max-delete=-1"] {
+            s.options.extra_flags = vec![bypass.into()];
+            assert!(s.build_argv().is_err(), "accepted bypass: {bypass}");
+        }
     }
 
     #[test]
@@ -415,7 +429,7 @@ mod tests {
     #[test]
     fn harmless_flags_do_not_escalate() {
         let mut s = spec(Tool::Rclone, OpKind::Copy);
-        s.options.extra_flags = vec!["--fast-list".into(), "--transfers".into(), "8".into()];
+        s.options.extra_flags = vec!["--fast-list".into(), "--metadata-set=x=y".into()];
         assert_eq!(s.risk(), RiskLevel::Caution);
     }
 
@@ -423,7 +437,7 @@ mod tests {
     fn contains_secret_detects_embedded_credentials() {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
         assert!(!s.contains_secret());
-        s.options.extra_flags = vec!["--sftp-pass".into(), "hunter2".into()];
+        s.options.extra_flags = vec!["--sftp-pass=hunter2".into()];
         assert!(s.contains_secret());
 
         let mut u = spec(Tool::Rclone, OpKind::Copy);
@@ -434,7 +448,7 @@ mod tests {
     #[test]
     fn preview_sanitized_redacts_secrets_in_flags() {
         let mut s = spec(Tool::Rsync, OpKind::Copy);
-        s.options.extra_flags = vec!["--sftp-pass".into(), "hunter2".into()];
+        s.options.extra_flags = vec!["--sftp-pass=hunter2".into()];
         let raw = s.preview().unwrap();
         let safe = s.preview_sanitized().unwrap();
         assert!(raw.contains("hunter2"), "raw preview keeps the secret");

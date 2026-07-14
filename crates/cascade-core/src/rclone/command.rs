@@ -6,6 +6,7 @@
 
 use crate::error::{CoreError, Result};
 use crate::security::destructive::Operation;
+use crate::{security::flags, Tool};
 
 /// The rclone operation to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,13 +133,13 @@ pub fn build_args(
             _ => {}
         }
     }
+    flags::validate_extra(Tool::Rclone, &opts.extra_flags)?;
 
     let mut args: Vec<String> = vec![op.subcommand().to_string()];
-    args.push(source.to_string());
-    if op.takes_dest() {
-        // safe: presence checked above
-        args.push(dest.unwrap().to_string());
-    }
+
+    // Power-user flags go first. Typed/safety options follow and therefore win
+    // if the underlying parser ever accepts a duplicate spelling.
+    args.extend(opts.extra_flags.iter().cloned());
 
     if opts.dry_run {
         args.push("--dry-run".into());
@@ -198,8 +199,13 @@ pub fn build_args(
     if opts.resync && op == RcloneOp::Bisync {
         args.push("--resync".into());
     }
-    for flag in &opts.extra_flags {
-        args.push(flag.clone());
+    // End option parsing before user-controlled endpoints. A local directory or
+    // remote named `--config`, for example, must remain a path, never a flag.
+    args.push("--".into());
+    args.push(source.to_string());
+    if op.takes_dest() {
+        // safe: presence checked above
+        args.push(dest.unwrap().to_string());
     }
 
     Ok(args)
@@ -239,7 +245,7 @@ mod tests {
             ..Default::default()
         };
         let args = build_args(RcloneOp::Copy, "/src", Some("gdrive:backup"), &opts).unwrap();
-        assert_eq!(args, vec!["copy", "/src", "gdrive:backup"]);
+        assert_eq!(args, vec!["copy", "--", "/src", "gdrive:backup"]);
     }
 
     #[test]
@@ -273,7 +279,7 @@ mod tests {
             ..Default::default()
         };
         let args = build_args(RcloneOp::Size, "gdrive:", None, &opts).unwrap();
-        assert_eq!(args, vec!["size", "gdrive:"]);
+        assert_eq!(args, vec!["size", "--", "gdrive:"]);
     }
 
     #[test]
@@ -360,7 +366,7 @@ mod tests {
         };
         // Size takes no dest; passing one must not add it to the argv.
         let args = build_args(RcloneOp::Size, "gdrive:", Some("/ignored"), &opts).unwrap();
-        assert_eq!(args, vec!["size", "gdrive:"]);
+        assert_eq!(args, vec!["size", "--", "gdrive:"]);
         assert!(!args.iter().any(|a| a == "/ignored"));
     }
 
@@ -371,26 +377,18 @@ mod tests {
             ..Default::default()
         };
         let args = build_args(RcloneOp::Lsd, "gdrive:", None, &opts).unwrap();
-        assert_eq!(args, vec!["lsd", "gdrive:"]);
+        assert_eq!(args, vec!["lsd", "--", "gdrive:"]);
     }
 
     #[test]
-    fn extra_flags_come_last_and_preserve_order() {
+    fn extra_flags_precede_typed_options_and_preserve_order() {
         let opts = RcloneOptions {
             stats: false,
-            extra_flags: vec![
-                "--fast-list".into(),
-                "--drive-chunk-size".into(),
-                "64M".into(),
-            ],
+            extra_flags: vec!["--fast-list".into(), "--drive-chunk-size=64M".into()],
             ..Default::default()
         };
         let args = build_args(RcloneOp::Copy, "/a", Some("/b"), &opts).unwrap();
-        let n = args.len();
-        assert_eq!(
-            &args[n - 3..],
-            &["--fast-list", "--drive-chunk-size", "64M"]
-        );
+        assert_eq!(&args[1..3], &["--fast-list", "--drive-chunk-size=64M"]);
     }
 
     #[test]
@@ -404,6 +402,17 @@ mod tests {
         let args = build_args(RcloneOp::Copy, "/a", Some("/b"), &opts).unwrap();
         assert_eq!(args.iter().filter(|a| *a == "--exclude").count(), 2);
         assert_eq!(args.iter().filter(|a| *a == "--include").count(), 1);
+    }
+
+    #[test]
+    fn endpoints_cannot_be_parsed_as_options() {
+        let opts = RcloneOptions {
+            stats: false,
+            ..Default::default()
+        };
+        let args = build_args(RcloneOp::Copy, "--config=evil", Some("--delete"), &opts).unwrap();
+        let end = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(&args[end + 1..], &["--config=evil", "--delete"]);
     }
 
     #[test]

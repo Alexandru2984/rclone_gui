@@ -5,6 +5,7 @@
 //! rather than silently rewriting paths.
 
 use crate::error::{CoreError, Result};
+use crate::{security::flags, Tool};
 
 /// Options for an rsync transfer.
 #[derive(Debug, Clone)]
@@ -18,6 +19,10 @@ pub struct RsyncOptions {
     pub delete: bool,
     /// `-z`: compress during transfer.
     pub compress: bool,
+    /// Compare file contents by checksum instead of size/mtime.
+    pub checksum: bool,
+    /// Remove successfully transferred source files (used for Move emulation).
+    pub remove_source_files: bool,
     /// Abort if the transfer would delete more than this many files
     /// (`--max-delete=N`). A safety net against a runaway mirror.
     pub max_delete: Option<u64>,
@@ -46,6 +51,8 @@ impl Default for RsyncOptions {
             dry_run: false,
             delete: false,
             compress: false,
+            checksum: false,
+            remove_source_files: false,
             max_delete: None,
             backup_dir: None,
             excludes: Vec::new(),
@@ -66,6 +73,7 @@ pub fn build_args(source: &str, dest: &str, opts: &RsyncOptions) -> Result<Vec<S
     if dest.trim().is_empty() {
         return Err(CoreError::InvalidCommand("destination is empty".into()));
     }
+    flags::validate_extra(Tool::Rsync, &opts.extra_flags)?;
 
     let mut args: Vec<String> = Vec::new();
 
@@ -79,6 +87,12 @@ pub fn build_args(source: &str, dest: &str, opts: &RsyncOptions) -> Result<Vec<S
     }
     if opts.compress {
         args.push("-z".into());
+    }
+    if opts.checksum {
+        args.push("--checksum".into());
+    }
+    if opts.remove_source_files {
+        args.push("--remove-source-files".into());
     }
     if opts.dry_run {
         args.push("-n".into());
@@ -122,6 +136,8 @@ pub fn build_args(source: &str, dest: &str, opts: &RsyncOptions) -> Result<Vec<S
         args.push(flag.clone());
     }
 
+    // Prevent a path beginning with '-' from becoming an rsync option.
+    args.push("--".into());
     args.push(source.to_string());
     args.push(dest.to_string());
     Ok(args)
@@ -275,5 +291,17 @@ mod tests {
         // Endpoints stay last; the custom flag is somewhere before them.
         assert_eq!(&args[n - 2..], &["/src/".to_string(), "/dst/".to_string()]);
         assert!(args[..n - 2].contains(&"--partial".to_string()));
+    }
+
+    #[test]
+    fn endpoints_cannot_be_parsed_as_options() {
+        let args = build_args(
+            "--rsync-path=/bin/evil",
+            "host:path",
+            &RsyncOptions::default(),
+        )
+        .unwrap();
+        let end = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(&args[end + 1..], &["--rsync-path=/bin/evil", "host:path"]);
     }
 }
