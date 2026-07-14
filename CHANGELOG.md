@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- Refuse rclone RC below 1.73.5 to avoid CVE-2026-41176 and CVE-2026-41179.
+- Reject custom flags that can negate dry-run/deletion guards, alter config or
+  logging, inject operands, or execute remote commands; place endpoints after `--`.
+- Reject credentials before argv construction or persistence; purge legacy
+  credential-bearing database rows and fully redact multiline private keys.
+- Canonicalize and revalidate paths at the execution boundary, including restored
+  queue items, backup directories, symlink changes, roots, and overlaps.
+- Bound process events, line/capture sizes, timeouts, GUI scrollback, and queue
+  concurrency; terminate complete process groups on cancellation and teardown.
+- Make recurring schedules dry-run by default and require explicit consent for
+  live schedules; validate calendar input and install private units without
+  following symlinks.
+- Pin toolchains, GitHub Actions, release tools, Flatpak archives, and offline
+  Cargo sources; isolate the release token and publish checksums plus provenance.
+- Block inline remote credentials from `rclone config create` process arguments.
+- Refresh and reduce the dependency graph, including the bundled SQLite stack.
+
 ## [0.1.1] — 2026-07-04
 
 ### Added

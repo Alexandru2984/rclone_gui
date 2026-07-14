@@ -1,39 +1,56 @@
-# H. Local threat model
+# Local threat model
 
-Cascade is a tool that can **overwrite and delete user data** and handle cloud credentials.
-We treat it as security-sensitive even though it is a local desktop app. Trust boundaries:
-the **user's intent** (UI) → **command construction** (core) → **child processes** (rclone/rsync/ssh)
-→ **remote services & the filesystem**.
+Cascade can overwrite or delete user data and invokes tools that handle cloud
+credentials. It is security-sensitive even though it is a local desktop app.
 
-| # | Threat | Vector | Mitigation (where) |
-|---|---|---|---|
-| 1 | **Shell injection** | A path/remote/pattern like `; rm -rf ~` interpreted by a shell | Never invoke a shell. Spawn with `tokio::process::Command` and an **argv vector**; `stdin = null`. No `sh -c`, no string concatenation of commands. (`process/`, `*/command.rs`) |
-| 2 | **Secret leakage in logs** | rclone/rsync/ssh echo tokens, `--password`, OAuth blobs, credential URLs, SSH keys | Mandatory `security::sanitize` pass on **every** line before display **and** before disk write. Redacts known flag values, `token:{...}` JSON, `user:pass@host` URLs, `Authorization:` headers, PEM key bodies. The **persisted/displayed command** (History, Job Details, clipboard, log header) goes through `preview_sanitized`, so secrets in paths/flags don't leak at rest. (`security/sanitize.rs`, `job/spec.rs`) |
-| 3 | **Destructive sync / data loss** | `sync`/`--delete`/`purge`/`delete` silently removing files; wrong direction | `security::destructive` classifies every op; UI requires a **double confirmation** naming the target, defaults to **dry-run first**, and shows a red danger style. Delete flags are never added implicitly; deletion/remote-exec flags slipped in via **custom flags** escalate the risk to Destructive so the gate still applies. (`security/destructive.rs`, `job/spec.rs::risk`, GUI) |
-| 4 | **rclone RC exposure** | `rcd` reachable from the network / unauthenticated / creds leaking | Bind **only** `127.0.0.1` on a random free port; random user + pass per session from the OS CSPRNG; `--rc-no-auth` is **forbidden**. Credentials are passed via the **environment** (`RCLONE_RC_USER/PASS`), never argv, so they are not exposed in world-readable `/proc/<pid>/cmdline`. (`rclone/rcd.rs`, `process::spawn_env`) |
-| 5 | **Malicious / catastrophic paths** | Selecting `/`, `~`, an empty/whitespace destination, or symlink/`..` traversal as src/dst | `security::path` rejects empty paths, the filesystem root `/`, bare `$HOME`, and any `..` component; **canonicalizes existing paths** so a symlink to `/` or `$HOME` can't slip past; warns on system dirs. `check_overlap` additionally flags an **identical or parent/child source↔destination** (wrong direction / copy-into-itself) and forces the confirmation gate. (`security/path.rs`) |
-| 6 | **Log file leakage at rest** | Sanitized-but-sensitive logs world-readable | Logs written under XDG data dir with `0700` dir / `0600` file perms; only metadata in SQLite. (`config.rs`, `logs/`) |
-| 7 | **Privilege escalation** | Running rclone/rsync as root | App **never** calls `sudo`. If an operation genuinely needs elevation (e.g. some mounts), we **print the exact manual command** for the user to run themselves. |
-| 8 | **Credential storage** | Tokens/passwords in plaintext SQLite/config | Cascade is **not a credential store**. rclone owns and encrypts its own config; we only invoke it and reference `remote:path`. `save_profile` **refuses** any spec whose paths/flags embed a secret (`JobSpec::contains_secret`), so credentials can't be persisted by mistake. No keyring/secret column exists. |
-| 9 | **Accidental mass overwrite / runaway delete** | Large destructive overwrite or delete without awareness | Pre-flight **structured dry-run summary** ("N new · N updated · N to delete") surfaced before a real run; an optional **`--max-delete` guard** aborts a run that would delete more than N files; **`--backup-dir`** makes a mirror reversible by moving replaced/deleted files aside. (`dryrun.rs`, `*/command.rs`) |
-| 10 | **Untrusted custom flags** | Power-user free-text flags injecting behavior | Custom flags are tokenized into individual argv items (no shell), control characters / unclosed quotes rejected, shown in the preview, and any deletion/remote-exec flag forces the destructive confirmation gate (see #3). (`security/flags.rs`, `job/spec.rs`) |
-| 11 | **Persisted queue re-running destructive jobs** | A queued mirror/delete auto-runs unattended after an app restart | The queue is persisted for convenience but **never stores secret-bearing specs** (`JobSpec::contains_secret` filter), and a restored queue starts **paused** — the user must explicitly resume before any queued destructive job runs. Queued destructive jobs also pass the confirmation gate at enqueue time. (`views/queue.rs`, `storage/repo.rs`) |
+## Trust boundaries
 
-## Known residual (low) risks
-- **`rclone config create` argv** — provider passwords must be passed as argv during
-  the brief creation call: rclone's `RCLONE_CONFIG_*` env overrides define
-  runtime-only remotes and are **not persisted** by `config create` (verified
-  empirically), so there is no env-based alternative. Exposure is single-call,
-  milliseconds long, and only matters against other local users on a shared host.
-  Mitigations: the Add Remote dialog shows an explicit **warning when the typed
-  parameters carry a credential**, recommending OAuth providers or a terminal
-  `rclone config` on shared machines; the process *output* is sanitized before
-  display; OAuth providers (Drive/Dropbox/OneDrive) never pass secrets on argv.
+`user intent → GUI confirmation → JobSpec validation → argv/RC request →
+rclone/rsync/systemd → local filesystem and remote services`
 
-Formerly listed here and since fixed: predictable `/tmp` demo paths (moved to the
-private data dir) and unsanitized `capture()` success output (now redacted like
-every other output path).
+The local OS account, installed `rclone`/`rsync` binaries, the user's rclone
+configuration, and configured remote services are trusted. Text entered into job
+fields, restored database rows, child-process output, filesystem paths, symlinks,
+and downloaded build inputs are treated as untrusted.
 
-## Non-goals (explicit)
-- Not a sandbox/MAC layer — we rely on the OS user's own filesystem permissions.
-- We do not attempt to defeat a malicious *local* user who already controls the account.
+## Threats and controls
+
+| # | Threat | Controls |
+|---|---|---|
+| 1 | Shell or option injection | Cascade never invokes a shell. Commands use explicit argv vectors with `stdin = null`. Source/destination operands follow `--`; control characters and option-like endpoints are rejected. Custom flags must be self-contained long options, and flags that can override dry-run, deletion limits, config, logging, remote execution, or endpoints are forbidden. |
+| 2 | Credentials reaching argv or persistence | `JobSpec::ensure_no_embedded_secrets` runs before preview, argv construction, queue/profile/history storage, and execution. Credential-bearing `rclone config create` parameters are blocked because rclone would expose them in `/proc/<pid>/cmdline`; OAuth or interactive `rclone config` must be used instead. RC credentials are random per session and passed through environment variables. |
+| 3 | Secret leakage through output | Streaming output passes through a stateful sanitizer before it leaves the process module. It redacts provider secrets, credential URLs, authorization headers, token JSON, and complete multiline PEM private keys. Captured output, previews, errors, historical free-form rows, and log writes are sanitized again at their persistence boundaries. |
+| 4 | Destructive operation without informed consent | Risk classification is derived from the typed operation and validated options. Destructive and overlap warnings enter the GUI confirmation gate; dry-run is the safe default. Typed `max-delete` and `backup-dir` controls cannot be negated by custom flags. Queueing uses the same gate. |
+| 5 | Catastrophic, overlapping, or changed paths | Empty/root/home paths, traversal, control characters, wrong-tool endpoint forms, and unsafe backup directories are rejected. Existing local paths and the nearest existing ancestor of new destinations are canonicalized. Root/system/remote-root/overlap warnings require acknowledgement. Immediately before execution, paths are resolved again and the warning snapshot must still match. Restored queue items with warnings remain blocked until reviewed. |
+| 6 | Vulnerable or exposed rclone RC daemon | RC is disabled unless rclone is parseably versioned at 1.73.5 or newer, which contains the fixes for CVE-2026-41176 and CVE-2026-41179. The daemon binds only `127.0.0.1` on a random free port and requires CSPRNG-generated credentials; `--rc-no-auth` is never used. Paths are revalidated after daemon startup and before submission. |
+| 7 | Memory exhaustion, hung children, or orphaned descendants | Streaming lines are capped at 64 KiB, event queues at 128 entries, GUI/log views are bounded, and captures are limited to 16 MiB per stream with a 120-second timeout. Children run in dedicated process groups. Cancellation sends SIGTERM and then SIGKILL to the group; timeout and RC teardown also terminate descendants. Parallel jobs are capped at eight. |
+| 8 | Sensitive or attacker-controlled files at rest | XDG application directories are real, private directories rather than symlinks. SQLite and logs are mode `0600`; directories are `0700`; new logs use exclusive creation and refuse symlinks. SQLite enables `secure_delete`, purges legacy credential-bearing rows at startup, and re-sanitizes historical text. Log readers enforce containment and size limits. |
+| 9 | Unattended destructive schedules | New schedules are dry-run by default. Every live recurring schedule requires an explicit acknowledgement that no future prompt will appear. Paths and warnings are revalidated, executables are canonicalized, `OnCalendar` uses a strict bounded grammar, and systemd arguments are quoted. Existing timers are stopped before replacement. Unit files are mode `0600`, staged with exclusive creation, atomically renamed, and never written through symlinks. |
+| 10 | Persisted work running with stale intent | A restored queue starts paused. Stored specs are revalidated and resolved immediately before launch; unacknowledged or changed warnings block execution. Credential-bearing rows are rejected at both serialization and repository boundaries. |
+| 11 | Supply-chain substitution | Rust and GitHub Actions are pinned to exact versions/commit SHAs. Release download URLs are immutable and SHA-256 verified. Build jobs have read-only tokens; only the isolated publish job can write releases. Releases include `SHA256SUMS` and GitHub provenance attestations. Flatpak archives and every Cargo crate are checksum-pinned, and the Cargo source list is deterministically checked against `Cargo.lock`. |
+| 12 | Unnecessary privilege or sandbox escape | Cascade never invokes `sudo`. The Flatpak uses a current GNOME runtime and grants only the network, notifications, display, GPU, and home access required for a backup tool; unused Secret Service access was removed. Native packages run with the user's normal permissions. |
+
+## Residual risks
+
+- A filesystem object can still be replaced while an external transfer is in
+  progress. Cascade narrows the check/use window by resolving immediately before
+  launch, but cannot freeze a live filesystem; use snapshots for hostile or
+  concurrently mutating trees.
+- Sanitization recognizes credential structures and provider naming conventions;
+  no heuristic can identify an arbitrary random secret stored under an innocent
+  field name. Do not put credentials in paths, labels, include/exclude patterns,
+  or custom fields.
+- Native builds intentionally trust the selected `rclone` and `rsync` binaries,
+  the user's `PATH`, rclone configuration, remote provider, OS, and GitHub runner
+  image. Checksums and provenance establish what was built, not that every
+  upstream component is defect-free.
+- Flatpak requires broad home-directory access because its purpose is to back up
+  arbitrary user files. This is a functional permission, not a containment
+  boundary for user data.
+
+## Non-goals
+
+- Defending against an attacker who already controls the same OS account.
+- Replacing filesystem snapshots, remote-side versioning, or independent backups.
+- Managing, recovering, or cryptographically protecting rclone's own config; that
+  file belongs to rclone and should be protected with its supported mechanisms.

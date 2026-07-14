@@ -73,14 +73,16 @@ cascade-gui    (GTK4 + libadwaita) ── thin view layer, no business rules
 3. Command builder turns the options struct into a `Vec<String>` **argv** (never a shell line).
 4. `process::Runner` spawns the child with `tokio::process::Command` using the argv vector,
    `stdin = null`, capturing stdout+stderr line streams. It runs on a dedicated Tokio thread
-   and emits `ProcessEvent`s over an `async-channel`.
+   and emits `ProcessEvent`s over a bounded `async-channel`.
 5. The GUI consumes the channel with `glib::spawn_future_local` (async-channel is executor-agnostic,
    so it bridges Tokio ↔ GLib main loop cleanly) — UI never blocks.
 6. The Job Queue updates the in-memory state machine and persists transitions to SQLite.
-7. Every stdout/stderr line passes through the **log sanitizer** before display or storage.
+7. Every stdout/stderr line passes through the stateful **log sanitizer** before
+   display or storage; line, capture, event, and UI buffers have hard limits.
 
 ### How we talk to rclone
-- **Primary (Phase 2):** start a local `rclone rcd` daemon bound to `127.0.0.1:<random-port>`,
+- **Primary:** after a fail-closed version check (rclone 1.73.5+), start a local
+  `rclone rcd` daemon bound to `127.0.0.1:<random-port>`,
   protected by a random user/pass, and drive it over the **RC HTTP API** (rich JSON: stats,
   per-transfer progress, listings, remote management). Never exposed off-loopback.
 - **Fallback (Phase 1 + always):** spawn `rclone <op>` as a CLI process and parse
