@@ -19,7 +19,7 @@ jobs:
     name: build .deb
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
@@ -55,7 +55,7 @@ jobs:
       GTK_PLUGIN_COMMIT: 7a3fbc31a9e5075073ff8790f26effbac5f84453
       GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
