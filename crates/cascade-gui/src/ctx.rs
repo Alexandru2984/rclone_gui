@@ -17,6 +17,9 @@ use cascade_core::storage::Store;
 pub struct AppCtx {
     pub store: Rc<Store>,
     pub paths: Paths,
+    /// False when any application directory was unsafe (for example a
+    /// symlink); filesystem persistence/logging must then stay disabled.
+    pub paths_ready: bool,
     /// Live settings; mutated by the Settings screen, read by other views.
     pub settings: RefCell<AppSettings>,
 }
@@ -24,15 +27,22 @@ pub struct AppCtx {
 impl AppCtx {
     pub fn new() -> Rc<Self> {
         let paths = Paths::resolve();
-        if let Err(e) = paths.ensure() {
-            warn!("could not create app directories: {e}");
-        }
-        let store = match Store::open(&paths.db_path) {
-            Ok(s) => s,
+        let paths_ready = match paths.ensure() {
+            Ok(()) => true,
             Err(e) => {
-                warn!("opening database failed ({e}); using an in-memory store");
-                Store::open_in_memory().expect("in-memory store")
+                warn!("unsafe or unavailable app directories ({e}); using memory-only state");
+                false
             }
+        };
+        let store = match paths_ready {
+            true => match Store::open(&paths.db_path) {
+                Ok(store) => store,
+                Err(e) => {
+                    warn!("opening database failed ({e}); using an in-memory store");
+                    Store::open_in_memory().expect("in-memory store")
+                }
+            },
+            false => Store::open_in_memory().expect("in-memory store"),
         };
         // Clean up runs orphaned by a previous crash/hard exit.
         if let Err(e) = store.fail_interrupted_runs() {
@@ -45,19 +55,22 @@ impl AppCtx {
             Ok(_) => {}
             Err(e) => warn!("could not purge legacy credentials from the database: {e}"),
         }
-        match cascade_core::logs::sanitize_existing_logs(&paths.log_dir) {
-            Ok(count) if count > 0 => {
-                warn!("re-sanitized {count} historical log files containing credentials")
+        if paths_ready {
+            match cascade_core::logs::sanitize_existing_logs(&paths.log_dir) {
+                Ok(count) if count > 0 => {
+                    warn!("re-sanitized {count} historical log files containing credentials")
+                }
+                Ok(_) => {}
+                Err(e) => warn!("could not re-sanitize historical logs: {e}"),
             }
-            Ok(_) => {}
-            Err(e) => warn!("could not re-sanitize historical logs: {e}"),
+            // Prune log files older than 30 days.
+            let _ = cascade_core::logs::prune_logs_older_than_days(&paths.log_dir, 30);
         }
-        // Prune log files older than 30 days.
-        let _ = cascade_core::logs::prune_logs_older_than_days(&paths.log_dir, 30);
         let settings = AppSettings::load(&store);
         Rc::new(Self {
             store: Rc::new(store),
             paths,
+            paths_ready,
             settings: RefCell::new(settings),
         })
     }

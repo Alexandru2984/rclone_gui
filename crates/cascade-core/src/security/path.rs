@@ -56,18 +56,9 @@ fn normalize_for_overlap(p: &str) -> Option<String> {
     }
     let trimmed = p.trim().trim_end_matches('/');
     let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
-    let path = std::path::Path::new(trimmed);
-    if let Ok(c) = std::fs::canonicalize(path) {
-        return Some(c.to_string_lossy().into_owned());
-    }
-    // The path itself may not exist yet (a fresh destination); resolve its
-    // parent so a relative or symlinked destination still compares correctly.
-    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
-        if let Ok(c) = std::fs::canonicalize(parent) {
-            return Some(c.join(name).to_string_lossy().into_owned());
-        }
-    }
-    Some(trimmed.to_string())
+    resolve_local_path(std::path::Path::new(trimmed))
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| Some(trimmed.to_string()))
 }
 
 /// Classify how `source` and `dest` overlap. A local path and a remote endpoint
@@ -149,7 +140,7 @@ pub fn validate(raw: &str) -> Result<PathVerdict> {
 
     // Check the literal path, then (if it exists) its symlink-resolved form.
     let verdict = classify_dangerous(normalized)?;
-    if let Ok(canon) = std::fs::canonicalize(normalized) {
+    if let Some(canon) = resolve_local_path(std::path::Path::new(normalized)) {
         let canon = canon.to_string_lossy();
         let canon_verdict = classify_dangerous(&canon)?; // may reject root/home
         if matches!(canon_verdict, PathVerdict::Warn(_)) {
@@ -157,6 +148,46 @@ pub fn validate(raw: &str) -> Result<PathVerdict> {
         }
     }
     Ok(verdict)
+}
+
+/// Resolve all existing ancestors and return an absolute path even when the
+/// leaf (or several trailing components) does not exist yet.
+fn resolve_local_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    let mut cursor = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        if let Ok(mut resolved) = std::fs::canonicalize(cursor) {
+            for component in missing.iter().rev() {
+                resolved.push(component);
+            }
+            return Some(resolved);
+        }
+        if let Some(name) = cursor.file_name() {
+            missing.push(name.to_os_string());
+        }
+        cursor = cursor.parent()?;
+    }
+}
+
+/// Resolve a validated local path into the stable absolute spelling passed to
+/// an external tool. Existing symlinks are removed from argv, narrowing the
+/// symlink-swap window between validation and process startup.
+pub fn resolve_for_execution(raw: &str) -> Result<String> {
+    let _ = validate(raw)?;
+    resolve_local_path(std::path::Path::new(raw))
+        .map(|path| {
+            let mut resolved = path.to_string_lossy().into_owned();
+            if raw.ends_with('/') && resolved != "/" {
+                resolved.push('/');
+            }
+            resolved
+        })
+        .ok_or_else(|| CoreError::InvalidPath(format!("could not resolve '{raw}'")))
 }
 
 /// The dangerous-location checks, applied to an already-normalized path.
@@ -458,6 +489,21 @@ mod tests {
         assert_eq!(
             check_overlap("/no/such/root", "/no/such/other"),
             Overlap::None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execution_path_resolves_symlinked_ancestors_for_missing_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let raw = link.join("new").join("deeper");
+        assert_eq!(
+            resolve_for_execution(raw.to_str().unwrap()).unwrap(),
+            real.join("new").join("deeper").to_string_lossy()
         );
     }
 }

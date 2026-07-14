@@ -47,6 +47,7 @@ impl Store {
     /// here so no caller can accidentally bypass the no-credentials policy.
     pub fn insert_job(&self, spec: &JobSpec) -> Result<i64> {
         spec.ensure_no_embedded_secrets()?;
+        let _ = spec.validate_paths()?;
         let options_json = serde_json::to_string(spec)?;
         let kind = match spec.tool {
             crate::Tool::Rclone => "rclone",
@@ -342,6 +343,7 @@ impl Store {
     /// secrets; configure an rclone remote and reference it as `remote:path`.
     pub fn save_profile(&self, spec: &JobSpec) -> Result<i64> {
         spec.ensure_no_embedded_secrets()?;
+        let _ = spec.validate_paths()?;
         let options_json = serde_json::to_string(spec)?;
         let kind = match spec.tool {
             crate::Tool::Rclone => "rclone",
@@ -419,6 +421,7 @@ impl Store {
     pub fn queue_replace(&self, specs: &[JobSpec]) -> Result<()> {
         for spec in specs {
             spec.ensure_no_embedded_secrets()?;
+            let _ = spec.validate_paths()?;
         }
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM queue_items", [])?;
@@ -837,6 +840,19 @@ mod tests {
         assert!(store.insert_job(&clean).is_err());
         assert!(store.queue_replace(&[clean]).is_err());
         assert_eq!(store.queue_list().unwrap().len(), 1);
+
+        let dangerous = JobSpec {
+            name: "dangerous".into(),
+            tool: crate::Tool::Rsync,
+            op: crate::job::OpKind::Sync,
+            source: "/source".into(),
+            destination: "/".into(),
+            dry_run: false,
+            delete: false,
+            options: Default::default(),
+        };
+        assert!(store.insert_job(&dangerous).is_err());
+        assert!(store.queue_replace(&[dangerous]).is_err());
 
         let jobs: i64 = store
             .conn

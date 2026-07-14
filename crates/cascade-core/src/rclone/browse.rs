@@ -28,7 +28,7 @@ pub fn listremotes_args() -> Vec<String> {
 
 /// argv for `rclone lsjson <path>`. `path` is passed as a single argv item.
 pub fn lsjson_args(path: &str) -> Vec<String> {
-    vec!["lsjson".into(), path.to_string()]
+    vec!["lsjson".into(), "--".into(), path.to_string()]
 }
 
 /// Parse `listremotes` output into remote names (each keeps its trailing `:`).
@@ -110,7 +110,15 @@ mod tests {
     fn lsjson_argv_is_two_items() {
         assert_eq!(
             lsjson_args("gdrive:Photos"),
-            vec!["lsjson", "gdrive:Photos"]
+            vec!["lsjson", "--", "gdrive:Photos"]
+        );
+    }
+
+    #[test]
+    fn option_like_browse_paths_are_after_the_terminator() {
+        assert_eq!(
+            lsjson_args("--config=evil"),
+            vec!["lsjson", "--", "--config=evil"]
         );
     }
 

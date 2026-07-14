@@ -10,6 +10,7 @@ use crate::error::{CoreError, Result};
 use crate::rclone::command::{self as rclone_cmd, RcloneOp, RcloneOptions};
 use crate::rsync::command::{build_args as rsync_args, RsyncOptions};
 use crate::security::destructive::{classify, Operation, RiskLevel};
+use crate::security::path::{self, PathVerdict};
 use crate::security::sanitize;
 use crate::Tool;
 
@@ -97,6 +98,71 @@ pub struct JobSpec {
 }
 
 impl JobSpec {
+    /// Validate every path-like field against the selected tool and current
+    /// filesystem state. Callers should display the returned warnings and keep
+    /// them as a safety snapshot for delayed execution.
+    pub fn validate_paths(&self) -> Result<Vec<String>> {
+        let mut warnings = Vec::new();
+        for (label, endpoint) in [
+            ("source", self.source.as_str()),
+            ("destination", self.destination.as_str()),
+        ] {
+            validate_endpoint_text(label, endpoint)?;
+            if path::is_remote_endpoint(endpoint) {
+                if self.tool == Tool::Rsync && path::looks_like_rclone_remote(endpoint) {
+                    return Err(CoreError::InvalidPath(format!(
+                        "{label} '{endpoint}' looks like an rclone remote, not an rsync/SSH endpoint"
+                    )));
+                }
+                if self.tool == Tool::Rclone && !path::looks_like_rclone_remote(endpoint) {
+                    return Err(CoreError::InvalidPath(format!(
+                        "{label} '{endpoint}' looks like an rsync/SSH endpoint, not an rclone remote"
+                    )));
+                }
+                validate_remote_path(label, endpoint, &mut warnings)?;
+            } else if !is_rclone_backend_endpoint(self.tool, endpoint) {
+                match path::validate(endpoint)? {
+                    PathVerdict::Ok => {}
+                    PathVerdict::Warn(warning) => {
+                        warnings.push(format!("{label}: {warning}"));
+                    }
+                }
+            }
+        }
+
+        if let Some(backup_dir) = self.options.backup_dir.as_deref() {
+            validate_endpoint_text("backup directory", backup_dir)?;
+            if path::is_remote_endpoint(backup_dir) {
+                if self.tool == Tool::Rsync {
+                    return Err(CoreError::InvalidPath(
+                        "rsync backup directory must be a local path on the receiving side".into(),
+                    ));
+                }
+                if !path::looks_like_rclone_remote(backup_dir) {
+                    return Err(CoreError::InvalidPath(format!(
+                        "backup directory '{backup_dir}' is not an rclone remote"
+                    )));
+                }
+                validate_remote_path("backup directory", backup_dir, &mut warnings)?;
+            } else if !is_rclone_backend_endpoint(self.tool, backup_dir) {
+                match path::validate(backup_dir)? {
+                    PathVerdict::Ok => {}
+                    PathVerdict::Warn(warning) => {
+                        warnings.push(format!("backup directory: {warning}"));
+                    }
+                }
+            }
+            if let Some(warning) = path::check_overlap(&self.destination, backup_dir).warning() {
+                warnings.push(format!("backup directory: {warning}"));
+            }
+        }
+
+        if let Some(warning) = path::check_overlap(&self.source, &self.destination).warning() {
+            warnings.push(warning.to_string());
+        }
+        Ok(warnings)
+    }
+
     /// Whether deletion of destination files actually happens for this spec.
     /// `Sync` mirrors (both tools), so it always deletes extras at the dest.
     pub fn delete_effective(&self) -> bool {
@@ -177,29 +243,60 @@ impl JobSpec {
         }
     }
 
+    /// Validate and resolve local endpoints into stable absolute spellings.
+    /// Existing symlinks are removed so every execution path (CLI, RC, or a
+    /// generated service) can use the same safety snapshot.
+    pub fn resolved_for_execution(&self) -> Result<Self> {
+        self.ensure_no_embedded_secrets()?;
+        let _ = self.validate_paths()?;
+        let mut resolved = self.clone();
+        resolved.source = endpoint_for_argv(self.tool, &self.source)?;
+        resolved.destination = endpoint_for_argv(self.tool, &self.destination)?;
+        resolved.options.backup_dir = self
+            .options
+            .backup_dir
+            .as_deref()
+            .map(|dir| endpoint_for_argv(self.tool, dir))
+            .transpose()?;
+        Ok(resolved)
+    }
+
     /// Build the concrete argv. Never produces a shell string.
     pub fn build_argv(&self) -> Result<Vec<String>> {
-        self.ensure_no_embedded_secrets()?;
-        let o = &self.options;
-        match self.tool {
+        self.prepare_execution().map(|(_, argv)| argv)
+    }
+
+    /// Return one resolved spec and the exact argv derived from it. Callers
+    /// that have multiple execution backends (CLI/RC/systemd) use this to avoid
+    /// resolving the same symlink to different targets in adjacent steps.
+    pub fn prepare_execution(&self) -> Result<(Self, Vec<String>)> {
+        let resolved = self.resolved_for_execution()?;
+        let argv = resolved.build_resolved_argv()?;
+        Ok((resolved, argv))
+    }
+
+    fn build_resolved_argv(&self) -> Result<Vec<String>> {
+        let resolved = self;
+        let o = &resolved.options;
+        match resolved.tool {
             Tool::Rclone => {
-                let opts = self.rclone_options();
+                let opts = resolved.rclone_options();
                 rclone_cmd::build_args(
-                    self.rclone_op(),
-                    &self.source,
-                    Some(&self.destination),
+                    resolved.rclone_op(),
+                    &resolved.source,
+                    Some(&resolved.destination),
                     &opts,
                 )
             }
             Tool::Rsync => {
-                if self.op == OpKind::Bisync {
+                if resolved.op == OpKind::Bisync {
                     return Err(CoreError::InvalidCommand(
                         "two-way sync (bisync) is available with rclone only".into(),
                     ));
                 }
                 let mut opts = RsyncOptions {
-                    dry_run: self.dry_run,
-                    delete: self.delete_effective(),
+                    dry_run: resolved.dry_run,
+                    delete: resolved.delete_effective(),
                     compress: o.compress,
                     checksum: o.checksum,
                     max_delete: o.max_delete,
@@ -211,11 +308,11 @@ impl JobSpec {
                     ..Default::default()
                 };
                 // rsync has no `move`; emulate it with --remove-source-files.
-                if self.op == OpKind::Move {
+                if resolved.op == OpKind::Move {
                     opts.delete = false; // moving is not mirroring
                     opts.remove_source_files = true;
                 }
-                rsync_args(&self.source, &self.destination, &opts)
+                rsync_args(&resolved.source, &resolved.destination, &opts)
             }
         }
     }
@@ -231,6 +328,13 @@ impl JobSpec {
     /// clipboard) so credentials embedded in paths or flags never leak at rest.
     pub fn preview_sanitized(&self) -> Result<String> {
         Ok(sanitize::redact(&self.preview()?))
+    }
+
+    /// Sanitize a preview from the exact argv snapshot that will be spawned.
+    /// This avoids rebuilding paths after validation and accidentally showing a
+    /// different symlink target than the command actually receives.
+    pub fn preview_argv_sanitized(&self, argv: &[String]) -> String {
+        sanitize::redact(&rclone_cmd::preview(self.binary(), argv))
     }
 
     /// Whether any serialized field embeds something the sanitizer recognizes
@@ -254,6 +358,54 @@ impl JobSpec {
             ));
         }
         Ok(())
+    }
+}
+
+const MAX_ENDPOINT_BYTES: usize = 4096;
+
+fn validate_endpoint_text(label: &str, endpoint: &str) -> Result<()> {
+    if endpoint.trim() != endpoint {
+        return Err(CoreError::InvalidPath(format!(
+            "{label} has leading or trailing whitespace"
+        )));
+    }
+    if endpoint.len() > MAX_ENDPOINT_BYTES {
+        return Err(CoreError::InvalidPath(format!(
+            "{label} exceeds the {MAX_ENDPOINT_BYTES}-byte safety limit"
+        )));
+    }
+    if endpoint.chars().any(char::is_control) {
+        return Err(CoreError::InvalidPath(format!(
+            "{label} contains a control character"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_remote_path(label: &str, endpoint: &str, warnings: &mut Vec<String>) -> Result<()> {
+    let remote_path = endpoint.split_once(':').map_or("", |(_, path)| path);
+    if remote_path.split('/').any(|component| component == "..") {
+        return Err(CoreError::DangerousPath(format!(
+            "{label} remote path must not contain '..'"
+        )));
+    }
+    if remote_path.is_empty() || remote_path.chars().all(|character| character == '/') {
+        warnings.push(format!(
+            "{label} is the root of a remote; this can affect every object on that remote"
+        ));
+    }
+    Ok(())
+}
+
+fn is_rclone_backend_endpoint(tool: Tool, endpoint: &str) -> bool {
+    tool == Tool::Rclone && endpoint.starts_with(':') && endpoint[1..].contains(':')
+}
+
+fn endpoint_for_argv(tool: Tool, endpoint: &str) -> Result<String> {
+    if path::is_remote_endpoint(endpoint) || is_rclone_backend_endpoint(tool, endpoint) {
+        Ok(endpoint.to_string())
+    } else {
+        path::resolve_for_execution(endpoint)
     }
 }
 
@@ -470,6 +622,82 @@ mod tests {
         assert!(s.build_argv().is_err());
         assert!(s.preview().is_err());
         assert!(s.preview_sanitized().is_err());
+    }
+
+    #[test]
+    fn dangerous_paths_are_rejected_by_the_argv_boundary() {
+        for tool in [Tool::Rclone, Tool::Rsync] {
+            let mut s = spec(tool, OpKind::Copy);
+            s.destination = "/".into();
+            assert!(s.build_argv().is_err());
+
+            let mut backup = spec(tool, OpKind::Sync);
+            backup.options.backup_dir = Some("/".into());
+            assert!(backup.build_argv().is_err());
+        }
+    }
+
+    #[test]
+    fn filesystem_paths_are_revalidated_after_symlink_changes() {
+        #[cfg(unix)]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let safe = dir.path().join("safe");
+            let link = dir.path().join("link");
+            std::fs::create_dir(&safe).unwrap();
+            std::os::unix::fs::symlink(&safe, &link).unwrap();
+            let mut s = spec(Tool::Rsync, OpKind::Copy);
+            s.source = link.to_string_lossy().into_owned();
+            let (resolved, argv) = s.prepare_execution().unwrap();
+            assert_eq!(resolved.source, safe.to_string_lossy());
+            assert!(argv.contains(&safe.to_string_lossy().into_owned()));
+            assert!(!argv.contains(&link.to_string_lossy().into_owned()));
+
+            std::fs::remove_file(&link).unwrap();
+            std::os::unix::fs::symlink("/", &link).unwrap();
+            assert!(s.build_argv().is_err());
+        }
+    }
+
+    #[test]
+    fn path_warnings_cover_remote_roots_system_dirs_and_overlap() {
+        let mut remote_root = spec(Tool::Rclone, OpKind::Sync);
+        remote_root.source = "source:data".into();
+        remote_root.destination = "backup:".into();
+        assert!(remote_root
+            .validate_paths()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.contains("root of a remote")));
+
+        let mut system = spec(Tool::Rsync, OpKind::Copy);
+        system.source = "/etc".into();
+        assert!(system
+            .validate_paths()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.contains("system directory")));
+
+        let mut overlap = spec(Tool::Rsync, OpKind::Copy);
+        overlap.destination = overlap.source.clone();
+        assert!(overlap
+            .validate_paths()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.contains("same location")));
+    }
+
+    #[test]
+    fn endpoints_reject_control_whitespace_traversal_and_tool_mismatch() {
+        let mut s = spec(Tool::Rclone, OpKind::Copy);
+        for source in [" /src", "/src\n", "remote:../escape", "user@host:/src"] {
+            s.source = source.into();
+            assert!(s.validate_paths().is_err(), "accepted {source:?}");
+        }
+
+        let mut r = spec(Tool::Rsync, OpKind::Copy);
+        r.source = "gdrive:data".into();
+        assert!(r.validate_paths().is_err());
     }
 
     #[test]

@@ -184,8 +184,12 @@ fn detail_row(title: &str, value: &str) -> adw::ActionRow {
 }
 
 fn load_log(ctx: &Rc<AppCtx>, run_id: i64) -> Vec<String> {
+    if !ctx.paths_ready {
+        return vec!["(logs disabled because application paths are unsafe)".to_string()];
+    }
     match ctx.store.run_log_path(run_id) {
-        Ok(Some(path)) => match cascade_core::logs::read_log_tail(
+        Ok(Some(path)) => match cascade_core::logs::read_log_tail_in_dir(
+            &ctx.paths.log_dir,
             std::path::Path::new(&path),
             2 * 1024 * 1024,
             5000,

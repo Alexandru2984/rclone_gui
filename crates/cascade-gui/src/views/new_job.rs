@@ -82,7 +82,7 @@ struct Inputs {
     /// Callback to refresh sibling screens (History, Profiles) after a change.
     on_changed: Rc<dyn Fn()>,
     /// Callback that hands a spec to the Jobs Queue.
-    enqueue: Rc<dyn Fn(JobSpec)>,
+    enqueue: Rc<dyn Fn(JobSpec, Vec<String>)>,
 }
 
 /// Public handle to the New Job screen: its root widget plus the ability to
@@ -123,7 +123,7 @@ pub fn build(
     ctx: Rc<AppCtx>,
     window: adw::ApplicationWindow,
     on_changed: Rc<dyn Fn()>,
-    on_enqueue: Rc<dyn Fn(JobSpec)>,
+    on_enqueue: Rc<dyn Fn(JobSpec, Vec<String>)>,
 ) -> NewJobView {
     // Prefill with throwaway demo dirs so the screen is immediately runnable.
     // These live under the app's private (0700) data dir — never world-shared
@@ -132,9 +132,21 @@ pub fn build(
     let demo = ctx.paths.data_dir.join("demo");
     let src = demo.join("src");
     let dst = demo.join("dst");
-    let _ = std::fs::create_dir_all(&src);
-    let _ = std::fs::create_dir_all(&dst);
-    let _ = std::fs::write(src.join("example.txt"), b"demo");
+    if ctx.paths_ready {
+        let _ = std::fs::create_dir_all(&src);
+        let _ = std::fs::create_dir_all(&dst);
+        let _ = std::fs::write(src.join("example.txt"), b"demo");
+    }
+    let source_text = if ctx.paths_ready {
+        format!("{}/", src.display())
+    } else {
+        String::new()
+    };
+    let destination_text = if ctx.paths_ready {
+        format!("{}/", dst.display())
+    } else {
+        String::new()
+    };
 
     let name = adw::EntryRow::builder()
         .title(crate::i18n::tr("Name (optional)"))
@@ -166,11 +178,11 @@ pub fn build(
 
     let source = adw::EntryRow::builder()
         .title(crate::i18n::tr("Source"))
-        .text(format!("{}/", src.display()))
+        .text(&source_text)
         .build();
     let dest = adw::EntryRow::builder()
         .title(crate::i18n::tr("Destination"))
-        .text(format!("{}/", dst.display()))
+        .text(&destination_text)
         .build();
     // Folder-picker buttons are added and wired in `connect_browse` during `wire`.
 
@@ -442,11 +454,8 @@ pub fn build(
     }
 }
 
-/// The translated source/destination overlap warning for a spec, or `None`.
-fn overlap_warning(spec: &JobSpec) -> Option<String> {
-    path::check_overlap(&spec.source, &spec.destination)
-        .warning()
-        .map(crate::i18n::tr)
+fn path_warnings(spec: &JobSpec) -> Vec<String> {
+    spec.validate_paths().unwrap_or_default()
 }
 
 fn spin_row(title: &str, lower: f64, upper: f64) -> adw::SpinRow {
@@ -517,7 +526,7 @@ impl Inputs {
 
         {
             let this = self.clone();
-            self.dry_btn.connect_clicked(move |_| this.run(true));
+            self.dry_btn.connect_clicked(move |_| this.run(true, None));
         }
         {
             let this = self.clone();
@@ -621,32 +630,11 @@ impl Inputs {
         if dest.trim().is_empty() {
             return Err("Destination is empty".into());
         }
-        for (label, p) in [("Source", &source), ("Destination", &dest)] {
-            if !path::is_remote_endpoint(p) {
-                if let Err(e) = path::validate(p) {
-                    return Err(format!("{label}: {e}"));
-                }
-            }
-        }
-
         let tool = if self.tool.selected() == 1 {
             Tool::Rclone
         } else {
             Tool::Rsync
         };
-        // Catch the common mistake of pointing rsync at an rclone remote: rsync
-        // would try to SSH to a host named e.g. "gdrive". Give an actionable
-        // error instead of a confusing "could not resolve hostname".
-        if tool == Tool::Rsync {
-            for (label, p) in [("Source", &source), ("Destination", &dest)] {
-                if path::looks_like_rclone_remote(p) {
-                    let name = p.split(':').next().unwrap_or("");
-                    return Err(format!(
-                        "{label} “{p}” looks like an rclone remote. Switch the Tool to rclone — rsync would try to connect over SSH to a host named “{name}”."
-                    ));
-                }
-            }
-        }
         let op = match self.op.selected() {
             1 => OpKind::Sync,
             2 => OpKind::Move,
@@ -700,7 +688,7 @@ impl Inputs {
             extra_flags,
         };
 
-        Ok(JobSpec {
+        let spec = JobSpec {
             name,
             tool,
             op,
@@ -709,7 +697,9 @@ impl Inputs {
             dry_run: false,
             delete: self.delete.is_active(),
             options,
-        })
+        };
+        spec.validate_paths().map_err(|error| error.to_string())?;
+        Ok(spec)
     }
 
     /// Recompute the command preview and risk badge.
@@ -720,7 +710,7 @@ impl Inputs {
                     Ok(p) => self.preview.set_label(&p),
                     Err(e) => self.preview.set_label(&format!("error: {e}")),
                 }
-                self.set_risk(spec.risk(), overlap_warning(&spec));
+                self.set_risk(spec.risk(), &path_warnings(&spec));
             }
             Err(msg) => {
                 self.preview.set_label(&format!("⚠ {msg}"));
@@ -733,7 +723,7 @@ impl Inputs {
         }
     }
 
-    fn set_risk(&self, risk: RiskLevel, overlap: Option<String>) {
+    fn set_risk(&self, risk: RiskLevel, path_warnings: &[String]) {
         let (mut text, mut css) = match risk {
             RiskLevel::Safe => (crate::i18n::tr("✓ Safe — nothing is deleted"), "success"),
             RiskLevel::Caution => (
@@ -745,10 +735,10 @@ impl Inputs {
                 "error",
             ),
         };
-        // A source/destination overlap is a likely mistake regardless of the
-        // base risk, so surface it and raise the badge to the error style.
-        if let Some(w) = &overlap {
-            text = format!("{text}\n⚠ {w}");
+        if !path_warnings.is_empty() {
+            for warning in path_warnings {
+                text.push_str(&format!("\n⚠ {warning}"));
+            }
             css = "error";
         }
         self.risk.set_label(&text);
@@ -759,7 +749,7 @@ impl Inputs {
 
         self.run_btn.remove_css_class("destructive-action");
         self.run_btn.remove_css_class("suggested-action");
-        if risk == RiskLevel::Destructive || overlap.is_some() {
+        if risk == RiskLevel::Destructive || !path_warnings.is_empty() {
             self.run_btn.add_css_class("destructive-action");
         } else {
             self.run_btn.add_css_class("suggested-action");
@@ -777,23 +767,24 @@ impl Inputs {
             }
         };
         let confirm = self.ctx.settings.borrow().confirm_destructive;
-        if (spec.risk().requires_confirmation() || overlap_warning(&spec).is_some()) && confirm {
-            self.confirm_enqueue(spec);
+        let warnings = path_warnings(&spec);
+        if (spec.risk().requires_confirmation() && confirm) || !warnings.is_empty() {
+            self.confirm_enqueue(spec, warnings);
         } else {
-            (self.enqueue)(spec);
+            (self.enqueue)(spec, warnings);
             self.log_line(&crate::i18n::tr("✓ added to queue"));
         }
     }
 
     /// Confirm before queuing a destructive job. Unlike the Start dialog there
     /// is no "dry-run first" option — the safe default is simply to not queue.
-    fn confirm_enqueue(self: &Rc<Self>, spec: JobSpec) {
+    fn confirm_enqueue(self: &Rc<Self>, spec: JobSpec, warnings: Vec<String>) {
         let mut body = crate::i18n::tr(
             "This operation can delete files at the destination. Queued jobs run without a further prompt.\n\n%s",
         )
         .replace("%s", &spec.preview().unwrap_or_default());
-        if let Some(w) = overlap_warning(&spec) {
-            body = format!("⚠ {w}\n\n{body}");
+        if !warnings.is_empty() {
+            body = format!("⚠ {}\n\n{body}", warnings.join("\n⚠ "));
         }
         let cancel_l = crate::i18n::tr("Cancel");
         let add_l = crate::i18n::tr("Add to queue");
@@ -807,7 +798,7 @@ impl Inputs {
         let this = self.clone();
         dialog.choose(&self.window, gio::Cancellable::NONE, move |resp| {
             if resp.as_str() == "add" {
-                (this.enqueue)(spec);
+                (this.enqueue)(spec, warnings);
                 this.log_line(&crate::i18n::tr("✓ added to queue"));
             }
         });
@@ -823,23 +814,23 @@ impl Inputs {
             }
         };
         let confirm = self.ctx.settings.borrow().confirm_destructive;
-        let overlap = overlap_warning(&spec);
-        // Confirm on a destructive op OR on a source/destination overlap, since
-        // an overlap is a likely mistake even for an otherwise "safe" copy.
-        if (spec.risk().requires_confirmation() || overlap.is_some()) && confirm {
-            self.confirm_destructive(&spec.preview().unwrap_or_default(), overlap);
+        let warnings = path_warnings(&spec);
+        // Path warnings always require consent, even when the optional generic
+        // destructive-confirmation preference is disabled.
+        if (spec.risk().requires_confirmation() && confirm) || !warnings.is_empty() {
+            self.confirm_destructive(&spec.preview().unwrap_or_default(), warnings);
         } else {
-            self.run(false);
+            self.run(false, Some(warnings));
         }
     }
 
-    fn confirm_destructive(self: &Rc<Self>, command_desc: &str, overlap: Option<String>) {
+    fn confirm_destructive(self: &Rc<Self>, command_desc: &str, warnings: Vec<String>) {
         let mut body = crate::i18n::tr(
             "This operation can delete files at the destination.\n\n%s\n\nRunning a dry-run first lets you preview exactly what would change.",
         )
         .replace("%s", command_desc);
-        if let Some(w) = overlap {
-            body = format!("⚠ {w}\n\n{body}");
+        if !warnings.is_empty() {
+            body = format!("⚠ {}\n\n{body}", warnings.join("\n⚠ "));
         }
         let cancel_l = crate::i18n::tr("Cancel");
         let dry_l = crate::i18n::tr("Dry-run first");
@@ -856,19 +847,20 @@ impl Inputs {
         dialog.set_close_response("cancel");
 
         let this = self.clone();
+        let expected_warnings = warnings;
         dialog.choose(
             &self.window,
             gio::Cancellable::NONE,
             move |resp| match resp.as_str() {
-                "run" => this.run(false),
-                "dry" => this.run(true),
+                "run" => this.run(false, Some(expected_warnings.clone())),
+                "dry" => this.run(true, None),
                 _ => {}
             },
         );
     }
 
     /// Build the argv, persist a job + run, and stream the process live.
-    fn run(self: &Rc<Self>, force_dry: bool) {
+    fn run(self: &Rc<Self>, force_dry: bool, expected_warnings: Option<Vec<String>>) {
         let mut spec = match self.read_spec() {
             Ok(s) => s,
             Err(e) => {
@@ -878,9 +870,18 @@ impl Inputs {
         };
         if force_dry {
             spec.dry_run = true;
+        } else {
+            let current_warnings = path_warnings(&spec);
+            if expected_warnings.as_ref() != Some(&current_warnings) {
+                self.log_line(
+                    "✗ Path safety changed after confirmation; review the paths and confirm again",
+                );
+                self.refresh_preview();
+                return;
+            }
         }
-        let argv = match spec.build_argv() {
-            Ok(a) => a,
+        let (spec, argv) = match spec.prepare_execution() {
+            Ok(prepared) => prepared,
             Err(e) => {
                 self.log_line(&format!("✗ {e}"));
                 return;
@@ -888,7 +889,7 @@ impl Inputs {
         };
         // Sanitized: this value is persisted (DB), written to the log file, and
         // shown later in History/Job Details, so it must not carry secrets.
-        let preview = spec.preview_sanitized().unwrap_or_default();
+        let preview = spec.preview_argv_sanitized(&argv);
 
         // Persist the job and the run we are about to start.
         let job_id = match self.ctx.store.insert_job(&spec) {
@@ -939,7 +940,11 @@ impl Inputs {
         let this = self.clone();
         glib::spawn_future_local(async move {
             // Per-run on-disk log (sanitized lines only).
-            let mut log = LogWriter::create(&this.ctx.paths.log_dir, run_id).ok();
+            let mut log = this
+                .ctx
+                .paths_ready
+                .then(|| LogWriter::create(&this.ctx.paths.log_dir, run_id).ok())
+                .flatten();
             if let Some(w) = log.as_mut() {
                 let _ = w.write_line(&format!("$ {preview_log}"));
             }
@@ -1020,6 +1025,7 @@ impl Inputs {
     /// transfer async, then poll `core/stats` (per-file) and `job/status` until
     /// it finishes. Persisting the job/run already happened in [`Self::run`].
     fn run_rc(self: &Rc<Self>, spec: JobSpec, run_id: i64, preview: String) {
+        let safety_warnings = spec.validate_paths().unwrap_or_default();
         let rcd = match Rcd::start() {
             Ok(r) => Rc::new(r),
             Err(e) => {
@@ -1028,6 +1034,34 @@ impl Inputs {
                 return;
             }
         };
+        let latest = match spec.resolved_for_execution() {
+            Ok(latest)
+                if latest.source == spec.source
+                    && latest.destination == spec.destination
+                    && latest.options.backup_dir == spec.options.backup_dir
+                    && latest.validate_paths().unwrap_or_default() == safety_warnings =>
+            {
+                latest
+            }
+            Ok(_) => {
+                rcd.stop();
+                self.log_line("✗ Path safety changed while the RC daemon was starting");
+                self.finalize_rc(
+                    run_id,
+                    false,
+                    Some("path safety changed before RC execution"),
+                    &spec.name,
+                );
+                return;
+            }
+            Err(error) => {
+                rcd.stop();
+                self.log_line(&format!("✗ path revalidation failed: {error}"));
+                self.finalize_rc(run_id, false, Some("path revalidation failed"), &spec.name);
+                return;
+            }
+        };
+        let spec = latest;
         self.cancelled.set(false);
         *self.rc_daemon.borrow_mut() = Some(rcd.clone());
         self.files_box.set_visible(true);
@@ -1046,7 +1080,11 @@ impl Inputs {
         let this = self.clone();
 
         glib::spawn_future_local(async move {
-            let mut log = LogWriter::create(&this.ctx.paths.log_dir, run_id).ok();
+            let mut log = this
+                .ctx
+                .paths_ready
+                .then(|| LogWriter::create(&this.ctx.paths.log_dir, run_id).ok())
+                .flatten();
             if let Some(w) = log.as_mut() {
                 let _ = w.write_line(&format!("$ {preview}"));
             }

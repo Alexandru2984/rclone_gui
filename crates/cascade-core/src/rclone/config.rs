@@ -87,8 +87,10 @@ pub fn validate_remote_name(name: &str) -> Result<()> {
     if n.is_empty() {
         return Err(CoreError::InvalidCommand("remote name is empty".into()));
     }
-    if n.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    if n.len() <= 128
+        && n.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && n == name
     {
         Ok(())
     } else {
@@ -114,14 +116,25 @@ pub fn config_create_args(
     let mut args = vec![
         "config".to_string(),
         "create".to_string(),
+        "--obscure".to_string(),
+        "--".to_string(),
         name.to_string(),
         rtype.to_string(),
     ];
     for (k, v) in params {
+        if k.is_empty()
+            || k.len() > 256
+            || v.len() > 4096
+            || k.chars().any(char::is_control)
+            || v.chars().any(char::is_control)
+        {
+            return Err(CoreError::InvalidCommand(
+                "remote parameters exceed safety limits or contain control characters".into(),
+            ));
+        }
         args.push(k.clone());
         args.push(v.clone());
     }
-    args.push("--obscure".into());
     Ok(args)
 }
 
@@ -131,6 +144,7 @@ pub fn config_delete_args(name: &str) -> Result<Vec<String>> {
     Ok(vec![
         "config".to_string(),
         "delete".to_string(),
+        "--".to_string(),
         name.to_string(),
     ])
 }
@@ -197,10 +211,13 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(&args[..4], &["config", "create", "box", "sftp"]);
+        assert_eq!(
+            &args[..6],
+            &["config", "create", "--obscure", "--", "box", "sftp"]
+        );
         assert!(args.windows(2).any(|w| w == ["host", "example.com"]));
         assert!(args.windows(2).any(|w| w == ["user", "bob"]));
-        assert_eq!(args.last().unwrap(), "--obscure");
+        assert_eq!(args.last().unwrap(), "bob");
     }
 
     #[test]
@@ -212,7 +229,7 @@ mod tests {
     fn delete_args_layout() {
         assert_eq!(
             config_delete_args("box").unwrap(),
-            vec!["config", "delete", "box"]
+            vec!["config", "delete", "--", "box"]
         );
     }
 
@@ -236,8 +253,8 @@ mod tests {
         assert!(validate_remote_name("my remote").is_err());
         assert!(validate_remote_name("weird!name").is_err());
         assert!(validate_remote_name("   ").is_err());
-        // Surrounding whitespace is trimmed before validation.
-        assert!(validate_remote_name("  gdrive  ").is_ok());
+        // Surrounding whitespace is rejected so validation and argv agree.
+        assert!(validate_remote_name("  gdrive  ").is_err());
     }
 
     #[test]
@@ -270,7 +287,10 @@ mod tests {
     #[test]
     fn create_args_without_params_still_obscure() {
         let args = config_create_args("box", "local", &[]).unwrap();
-        assert_eq!(args, vec!["config", "create", "box", "local", "--obscure"]);
+        assert_eq!(
+            args,
+            vec!["config", "create", "--obscure", "--", "box", "local"]
+        );
     }
 
     #[test]

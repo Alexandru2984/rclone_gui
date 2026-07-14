@@ -39,6 +39,15 @@ impl Paths {
     pub fn ensure(&self) -> std::io::Result<()> {
         for d in [&self.config_dir, &self.data_dir, &self.log_dir] {
             std::fs::create_dir_all(d)?;
+            if !std::fs::symlink_metadata(d)?.file_type().is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "application directory '{}' must not be a symlink",
+                        d.display()
+                    ),
+                ));
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -93,5 +102,24 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o700, "data dir should be private (0700)");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_refuses_symlinked_application_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let data = root.path().join("data-link");
+        symlink(&outside, &data).unwrap();
+        let paths = Paths {
+            config_dir: root.path().join("config"),
+            data_dir: data.clone(),
+            log_dir: data.join("logs"),
+            db_path: data.join("cascade.db"),
+        };
+        assert!(paths.ensure().is_err());
     }
 }

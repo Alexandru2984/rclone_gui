@@ -18,6 +18,7 @@ use crate::ctx::AppCtx;
 
 struct Item {
     spec: JobSpec,
+    acknowledged_path_warnings: Option<Vec<String>>,
     row: adw::ActionRow,
     up: gtk::Button,
     down: gtk::Button,
@@ -135,7 +136,7 @@ impl QueueView {
             view.paused.set(true);
             pause.set_label(&crate::i18n::tr("Resume"));
             for spec in restored {
-                view.enqueue(spec); // pump() is suppressed while paused
+                view.enqueue(spec, None); // pump() is suppressed while paused
             }
         }
         view
@@ -146,13 +147,18 @@ impl QueueView {
     }
 
     /// Add a job to the queue and try to start it.
-    pub fn enqueue(&self, spec: JobSpec) {
+    pub fn enqueue(&self, spec: JobSpec, acknowledged_path_warnings: Option<Vec<String>>) {
         let id = self.next_id.get();
         self.next_id.set(id + 1);
 
+        let current_warnings = spec.validate_paths().unwrap_or_default();
+        let subtitle = current_warnings.first().map_or_else(
+            || crate::i18n::tr("queued"),
+            |warning| format!("queued · ⚠ {warning}"),
+        );
         let row = adw::ActionRow::builder()
             .title(crate::views::esc(&spec.name))
-            .subtitle(crate::i18n::tr("queued"))
+            .subtitle(&subtitle)
             .build();
 
         let mk = |icon: &str, tip: &str| {
@@ -197,6 +203,7 @@ impl QueueView {
             id,
             Item {
                 spec,
+                acknowledged_path_warnings,
                 row,
                 up,
                 down,
@@ -220,7 +227,12 @@ impl QueueView {
         let items = self.items.borrow();
         let mut pending: Vec<(i32, JobSpec)> = items
             .values()
-            .filter(|it| !it.launched && !it.done && !it.spec.contains_secret())
+            .filter(|it| {
+                !it.launched
+                    && !it.done
+                    && !it.spec.contains_secret()
+                    && it.spec.validate_paths().is_ok()
+            })
             .map(|it| (it.row.index(), it.spec.clone()))
             .collect();
         pending.sort_by_key(|(idx, _)| *idx);
@@ -275,8 +287,13 @@ impl QueueView {
     }
 
     fn launch(&self, id: u64) {
-        let (spec, row, cancel) = match self.items.borrow().get(&id) {
-            Some(it) => (it.spec.clone(), it.row.clone(), it.cancel.clone()),
+        let (spec, expected_warnings, row, cancel) = match self.items.borrow().get(&id) {
+            Some(it) => (
+                it.spec.clone(),
+                it.acknowledged_path_warnings.clone(),
+                it.row.clone(),
+                it.cancel.clone(),
+            ),
             None => return,
         };
         // Once launched, the job is no longer pending: mark it and drop it from
@@ -286,8 +303,28 @@ impl QueueView {
         }
         self.persist();
 
-        let argv = match spec.build_argv() {
-            Ok(a) => a,
+        let current_warnings = match spec.validate_paths() {
+            Ok(warnings) => warnings,
+            Err(error) => {
+                row.set_subtitle(&format!("path safety error: {error}"));
+                self.mark_done(id);
+                self.queue.borrow_mut().complete();
+                self.pump();
+                return;
+            }
+        };
+        if current_warnings != expected_warnings.unwrap_or_default() {
+            row.set_subtitle(
+                "path safety changed or needs confirmation; review this job in New Job",
+            );
+            self.mark_done(id);
+            self.queue.borrow_mut().complete();
+            self.pump();
+            return;
+        }
+
+        let (spec, argv) = match spec.prepare_execution() {
+            Ok(prepared) => prepared,
             Err(e) => {
                 row.set_subtitle(&format!("error: {e}"));
                 self.mark_done(id);
@@ -297,7 +334,7 @@ impl QueueView {
             }
         };
         // Sanitized: persisted to the DB and written to the on-disk log.
-        let preview = spec.preview_sanitized().unwrap_or_default();
+        let preview = spec.preview_argv_sanitized(&argv);
 
         let job_id = match self.ctx.store.insert_job(&spec) {
             Ok(j) => j,
@@ -337,8 +374,11 @@ impl QueueView {
 
         let this = self.clone();
         let log_dir = self.ctx.paths.log_dir.clone();
+        let paths_ready = self.ctx.paths_ready;
         glib::spawn_future_local(async move {
-            let mut log = LogWriter::create(&log_dir, run_id).ok();
+            let mut log = paths_ready
+                .then(|| LogWriter::create(&log_dir, run_id).ok())
+                .flatten();
             if let Some(w) = log.as_mut() {
                 let _ = w.write_line(&format!("$ {preview}"));
             }

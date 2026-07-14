@@ -65,11 +65,11 @@ impl MainWindow {
 
         // Jobs queue: runs up to max_parallel jobs; refreshes History on change.
         let queue = QueueView::new(ctx.clone(), on_changed.clone());
-        let on_enqueue: Rc<dyn Fn(JobSpec)> = {
+        let on_enqueue: Rc<dyn Fn(JobSpec, Vec<String>)> = {
             let queue = queue.clone();
             let stack = stack.clone();
-            Rc::new(move |spec| {
-                queue.enqueue(spec);
+            Rc::new(move |spec, acknowledged_warnings| {
+                queue.enqueue(spec, Some(acknowledged_warnings));
                 stack.set_visible_child_name("queue");
             })
         };

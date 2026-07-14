@@ -92,6 +92,25 @@ pub fn read_log_tail(
     Ok(lines)
 }
 
+/// Read a bounded log only when its canonical location remains inside the
+/// application's canonical log directory.
+pub fn read_log_tail_in_dir(
+    log_dir: &Path,
+    path: &Path,
+    max_bytes: usize,
+    max_lines: usize,
+) -> std::io::Result<Vec<String>> {
+    let canonical_dir = std::fs::canonicalize(log_dir)?;
+    let canonical_path = std::fs::canonicalize(path)?;
+    if !canonical_path.starts_with(&canonical_dir) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "recorded log path escapes the application log directory",
+        ));
+    }
+    read_log_tail(&canonical_path, max_bytes, max_lines)
+}
+
 /// Re-sanitize historical log files created by older Cascade versions.
 ///
 /// Files are read in fixed chunks, lines are capped, PEM state is tracked
@@ -476,5 +495,21 @@ mod tests {
         std::fs::write(&target, "large/untrusted").unwrap();
         symlink(target, &link).unwrap();
         assert!(read_log_tail(&link, 1024, 10).is_err());
+    }
+
+    #[test]
+    fn log_tail_in_dir_refuses_outside_files() {
+        let root = tempfile::tempdir().unwrap();
+        let logs = root.path().join("logs");
+        std::fs::create_dir(&logs).unwrap();
+        let inside = logs.join("run-1.log");
+        let outside = root.path().join("outside.log");
+        std::fs::write(&inside, "inside").unwrap();
+        std::fs::write(&outside, "outside").unwrap();
+        assert_eq!(
+            read_log_tail_in_dir(&logs, &inside, 1024, 10).unwrap(),
+            vec!["inside"]
+        );
+        assert!(read_log_tail_in_dir(&logs, &outside, 1024, 10).is_err());
     }
 }

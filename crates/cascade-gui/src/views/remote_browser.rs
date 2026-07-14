@@ -398,8 +398,36 @@ impl RemoteBrowserView {
         self.status.set_visible(true);
         self.status
             .set_label(&crate::i18n::tr("Downloading “%s”…").replace("%s", name));
-        // `rclone copy <file> <dir>` places the file inside dest_dir.
-        let args = vec!["copy".to_string(), src.to_string(), dest_dir.to_string()];
+        let spec = cascade_core::job::JobSpec {
+            name: format!("Download {name}"),
+            tool: cascade_core::Tool::Rclone,
+            op: cascade_core::job::OpKind::Copy,
+            source: src.to_string(),
+            destination: dest_dir.to_string(),
+            dry_run: false,
+            delete: false,
+            options: Default::default(),
+        };
+        let warnings = match spec.validate_paths() {
+            Ok(warnings) if warnings.is_empty() => warnings,
+            Ok(warnings) => {
+                self.status
+                    .set_label(&format!("✗ Unsafe download path: {}", warnings.join("; ")));
+                return;
+            }
+            Err(error) => {
+                self.status.set_label(&format!("✗ {error}"));
+                return;
+            }
+        };
+        debug_assert!(warnings.is_empty());
+        let args = match spec.build_argv() {
+            Ok(args) => args,
+            Err(error) => {
+                self.status.set_label(&format!("✗ {error}"));
+                return;
+            }
+        };
         let rx = capture("rclone", args);
         let this = self.clone();
         let done = crate::i18n::tr("✓ Saved “%s” to %d")

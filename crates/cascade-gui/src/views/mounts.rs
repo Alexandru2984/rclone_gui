@@ -240,6 +240,7 @@ impl MountsView {
                 return;
             }
         };
+        let mp = argv.last().cloned().unwrap_or(mp);
         self.status.set_label(""); // not tr("") — gettext("") returns the catalog header
 
         let handle = spawn("rclone", argv);

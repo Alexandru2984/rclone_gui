@@ -6,6 +6,7 @@
 //! cleanly (we never `kill -9` unless that fails).
 
 use crate::error::{CoreError, Result};
+use crate::security::path::{self, PathVerdict};
 
 /// The external program used to unmount a FUSE mount on Linux.
 pub const UNMOUNT_BIN: &str = "fusermount";
@@ -37,12 +38,40 @@ pub fn mount_args(remote_path: &str, mountpoint: &str, opts: &MountOptions) -> R
     if mountpoint.trim().is_empty() {
         return Err(CoreError::InvalidCommand("mountpoint is empty".into()));
     }
+    if remote_path.trim() != remote_path
+        || mountpoint.trim() != mountpoint
+        || remote_path.len() > 4096
+        || mountpoint.len() > 4096
+        || remote_path.chars().any(char::is_control)
+        || mountpoint.chars().any(char::is_control)
+    {
+        return Err(CoreError::InvalidPath(
+            "mount endpoints contain whitespace or control characters".into(),
+        ));
+    }
+    if !path::is_remote_endpoint(remote_path) {
+        return Err(CoreError::InvalidPath(
+            "mount source must be an rclone remote endpoint".into(),
+        ));
+    }
+    let remote_suffix = remote_path.split_once(':').map_or("", |(_, suffix)| suffix);
+    if remote_suffix.split('/').any(|component| component == "..") {
+        return Err(CoreError::DangerousPath(
+            "mount source must not contain '..'".into(),
+        ));
+    }
+    if !std::path::Path::new(mountpoint).is_absolute() {
+        return Err(CoreError::InvalidPath(
+            "mountpoint must be an absolute path".into(),
+        ));
+    }
+    match path::validate(mountpoint)? {
+        PathVerdict::Ok => {}
+        PathVerdict::Warn(warning) => return Err(CoreError::DangerousPath(warning)),
+    }
+    let mountpoint = path::resolve_for_execution(mountpoint)?;
 
-    let mut args = vec![
-        "mount".to_string(),
-        remote_path.to_string(),
-        mountpoint.to_string(),
-    ];
+    let mut args = vec!["mount".to_string()];
     if opts.read_only {
         args.push("--read-only".into());
     }
@@ -50,6 +79,9 @@ pub fn mount_args(remote_path: &str, mountpoint: &str, opts: &MountOptions) -> R
         args.push("--vfs-cache-mode".into());
         args.push("writes".into());
     }
+    args.push("--".into());
+    args.push(remote_path.to_string());
+    args.push(mountpoint);
     Ok(args)
 }
 
@@ -73,7 +105,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(args, vec!["mount", "gdrive:Photos", "/home/u/mnt"]);
+        assert_eq!(args, vec!["mount", "--", "gdrive:Photos", "/home/u/mnt"]);
     }
 
     #[test]
@@ -102,5 +134,14 @@ mod tests {
     #[test]
     fn unmount_argv() {
         assert_eq!(unmount_args("/home/u/mnt"), vec!["-u", "/home/u/mnt"]);
+    }
+
+    #[test]
+    fn dangerous_mountpoints_and_remote_traversal_are_rejected() {
+        let options = MountOptions::default();
+        assert!(mount_args("r:path", "/", &options).is_err());
+        assert!(mount_args("r:../escape", "/mnt/safe", &options).is_err());
+        assert!(mount_args("r:path", "relative", &options).is_err());
+        assert!(mount_args("--daemon", "/mnt/safe", &options).is_err());
     }
 }
