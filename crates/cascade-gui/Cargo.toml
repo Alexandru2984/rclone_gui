@@ -20,7 +20,7 @@ serde_json.workspace = true
 # Ubuntu 26.04 ships a recent GTK4, so v4_12 is a safe floor.
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
-glib = "0.20"
+glib = "0.22"
 # Internationalization via the system gettext (glibc provides libintl).
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 tracing = "0.1"
