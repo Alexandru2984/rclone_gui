@@ -24,7 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install rsync (for end-to-end tests)
         run: sudo apt-get update && sudo apt-get install -y rsync
       - name: rustfmt
@@ -48,7 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@c0e9df88980754dd93e5833b8dcb1b304c1fe173 # 1.96.0
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: clippy (gui)
         run: cargo clippy --locked -p cascade-gui --all-targets -- -D warnings
       - name: test (gui)
@@ -82,7 +82,7 @@ jobs:
         with:
           tool: cargo-llvm-cov@0.8.7
           fallback: none
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install rsync + rclone (exercise the real tool paths)
         run: |
           sudo apt-get update
